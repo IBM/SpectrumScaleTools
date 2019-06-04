@@ -9,6 +9,6 @@ At this point only two tools are made available:
 
  SpectrumScale_NETWORK_READINESS is a tool to perform network latency and bandwidth tests.
 
- Both this tools are linked to ECE release.
+ Both these tools are linked to ECE release.
 
  NOTE: Unless stated otherwise, the tools are released according to the license file on this repository and come with no warranty.
