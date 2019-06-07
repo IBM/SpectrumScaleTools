@@ -1,6 +1,4 @@
-In this repository you would find open source tools that are in relation with IBM Spectrum Scale.
-
-At this point only two tools are made available:
+In this repository you would find open source tools that are in relation with IBM Spectrum Scale:
 
  - [SpectrumScale_ECE_OS_READINESS](https://github.com/IBM/SpectrumScale_ECE_OS_READINESS)
  - [SpectrumScale_NETWORK_READINESS](https://github.com/IBM/SpectrumScale_NETWORK_READINESS)
