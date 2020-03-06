@@ -7,6 +7,7 @@ In this repository you would find open source tools that are in relation with IB
  - [SpectrumScale_ECE_OS_OVERVIEW](https://github.com/IBM/SpectrumScale_ECE_OS_OVERVIEW)
  - [SpectrumScale_ECE_OS_READINESS](https://github.com/IBM/SpectrumScale_ECE_OS_READINESS)
  - [SpectrumScale_ECE_STORAGE_READINESS](https://github.com/IBM/SpectrumScale_ECE_STORAGE_READINESS)
+ - [IBM Spectrum Scale install infra](https://github.com/IBM/ibm-spectrum-scale-install-infra)
  - [SpectrumScale_NETWORK_READINESS](https://github.com/IBM/SpectrumScale_NETWORK_READINESS)
 
 
