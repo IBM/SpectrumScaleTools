@@ -2,6 +2,7 @@ In this repository you would find open source tools that are in relation with IB
 
 
  - [IBM Spectrum Scale Bridge for Grafana](https://github.com/IBM/ibm-spectrum-scale-bridge-for-grafana)
+ - [IBM Spectrum Scale cloud install](https://github.com/IBM/ibm-spectrum-scale-cloud-install)
  - [IBM Spectrum Scale Container Storage Interface driver](https://github.com/IBM/ibm-spectrum-scale-csi-driver)
  - [IBM Spectrum Scale install infra](https://github.com/IBM/ibm-spectrum-scale-install-infra)
  - [SpectrumScale_ECE_CAPACITY_ESTIMATOR](https://github.com/IBM/SpectrumScale_ECE_CAPACITY_ESTIMATOR)
