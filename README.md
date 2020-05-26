@@ -4,6 +4,7 @@ In this repository you would find open source tools that are in relation with IB
  - [IBM Spectrum Scale cloud install](https://github.com/IBM/ibm-spectrum-scale-cloud-install)
  - [IBM Spectrum Scale Container Storage Interface driver](https://github.com/IBM/ibm-spectrum-scale-csi-driver)
  - [IBM Spectrum Scale install infra](https://github.com/IBM/ibm-spectrum-scale-install-infra)
+ - [IBM Spectrum Scale Security Posture](https://github.com/IBM/IBM-Spectrum-Scale-Security-Posture)
  - [Oracle Cloud Infrastructure IBM Spectrum Scale terraform template](https://github.com/oracle-quickstart/oci-ibm-spectrum-scale)
  - [SpectrumScale_ECE_CAPACITY_ESTIMATOR](https://github.com/IBM/SpectrumScale_ECE_CAPACITY_ESTIMATOR)
  - [SpectrumScale_ECE_OS_OVERVIEW](https://github.com/IBM/SpectrumScale_ECE_OS_OVERVIEW)
