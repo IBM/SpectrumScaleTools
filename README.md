@@ -2,7 +2,7 @@ In this repository you would find open source tools that are in relation with IB
 
  - [IBM Spectrum Scale Bridge for Grafana](https://github.com/IBM/ibm-spectrum-scale-bridge-for-grafana)
  - [IBM Spectrum Scale cloud install](https://github.com/IBM/ibm-spectrum-scale-cloud-install)
- - [IBM Spectrum Scale Container Storage Interface driver](https://github.com/IBM/ibm-spectrum-scale-csi-driver)
+ - [IBM Spectrum Scale Container Storage Interface (CSI)](https://github.com/IBM/ibm-spectrum-scale-csi)
  - [IBM Spectrum Scale install infra](https://github.com/IBM/ibm-spectrum-scale-install-infra)
  - [IBM Spectrum Scale Security Posture](https://github.com/IBM/IBM-Spectrum-Scale-Security-Posture)
  - [Oracle Cloud Infrastructure IBM Spectrum Scale terraform template](https://github.com/oracle-quickstart/oci-ibm-spectrum-scale)
@@ -17,5 +17,5 @@ In this repository you would find open source tools that are in relation with IB
  ***NOTE:*** Unless stated otherwise on the links, the tools are listed come with no warranty of any kind from IBM.
  
  Other links:
- 
+ - [Spectrum Scale FAQ](https://www.ibm.com/support/knowledgecenter/en/STXKQY/gpfsclustersfaq.html)
  - [Spectrum Scale User Group](https://www.spectrumscaleug.org/)
