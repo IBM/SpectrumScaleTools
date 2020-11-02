@@ -17,5 +17,6 @@ In this repository you would find open source tools that are in relation with IB
  ***NOTE:*** Unless stated otherwise on the links, the tools are listed come with no warranty of any kind from IBM.
  
  Other links:
+ - [IBM Spectrum Scale on AWS marketplace](https://aws.amazon.com/marketplace/pp/IBM-IBM-Spectrum-Scale/B07DRLMG2W)
  - [Spectrum Scale FAQ](https://www.ibm.com/support/knowledgecenter/en/STXKQY/gpfsclustersfaq.html)
  - [Spectrum Scale User Group](https://www.spectrumscaleug.org/)
