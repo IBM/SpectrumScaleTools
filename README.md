@@ -12,6 +12,7 @@ In this repository you would find open source tools that are in relation with IB
  - [SpectrumScale_ECE_STORAGE_READINESS](https://github.com/IBM/SpectrumScale_ECE_STORAGE_READINESS)
  - [SpectrumScale_ECE_tuned_profile](https://github.com/IBM/SpectrumScale_ECE_tuned_profile)
  - [SpectrumScale_NETWORK_READINESS](https://github.com/IBM/SpectrumScale_NETWORK_READINESS)
+ - [SpectrumScale_Vagrant](https://github.com/IBM/SpectrumScaleVagrant)
 
 
  ***NOTE:*** Unless stated otherwise on the links, the tools are listed come with no warranty of any kind from IBM.
