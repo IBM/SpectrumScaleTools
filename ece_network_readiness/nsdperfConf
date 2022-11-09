@@ -1,0 +1,12 @@
+{"server": [],
+"client": [],
+"nodelist": [],
+"test": [],
+"testTime": "",
+"buffsize": "",
+"socksize": "",
+"receiverThr": "",
+"workerThr": "",
+"testerThr": "",
+"rdma": "",
+"usecm": ""}

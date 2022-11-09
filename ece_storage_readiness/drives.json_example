@@ -1,0 +1,9 @@
+{
+  "sda": "HDD",
+  "sdb": "HDD",
+  "sdc": "SSD",
+  "sdd": "SSD",
+  "sde": "NVME",
+  "sdf": "NVME"
+}
+

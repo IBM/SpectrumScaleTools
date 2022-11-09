@@ -1,0 +1,26 @@
+- 1.0
+  - Initial release ("Works in my lab")
+- 1.1
+    - Added parallel test of drives of the same type
+- 1.2
+    - Added block size
+- 1.3
+    - Fix parallel run
+- 1.4
+    - Error fixes
+- 1.5
+    - Added write tests
+- 1.6
+    - Fix typos
+    - Fix KPIs
+    - Align offset to 4K
+    - clear that 128k is the blocsize that needs to be run for KPI comparision
+- 1.7
+    - Update support OS
+- 1.8
+    - Support RHEL8.5/8.6
+- 1.9
+    - Support RHEL9.0
+- 1.10
+    - Support RHEL8.7
+    - Support RHEL9.1
