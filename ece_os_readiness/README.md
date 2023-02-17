@@ -72,10 +72,12 @@ optional arguments:
 [ INFO  ] c72f4m5u17-ib0 checking processor compatibility
 [ INFO  ] c72f4m5u17-ib0 x86_64 processor is supported to run ECE
 [ INFO  ] c72f4m5u17-ib0 checking socket count
-[ INFO  ] c72f4m5u17-ib0 this system has 2 sockets which complies with the minimum of 2 sockets required to support ECE
+[ INFO  ] c72f4m5u17-ib0 is Intel based
+[ INFO  ] c72f4m5u17-ib0 has 2 sockets which complies with the requirements to support ECE 
 [ INFO  ] c72f4m5u17-ib0 checking core count
-[ INFO  ] c72f4m5u17-ib0 socket 0x0048 has 10 core[s] which copmplies with 8 cores per socket required to support ECE
-[ INFO  ] c72f4m5u17-ib0 socket 0x0044 has 10 core[s] which copmplies with 8 cores per socket required to support ECE
+[ INFO  ] c72f4m5u17-ib0 socket 0x0048 has 10 core[s]
+[ INFO  ] c72f4m5u17-ib0 socket 0x0044 has 10 core[s]
+[ INFO  ] c72f4m5u17-ib0 has a total of 20 cores which complies with the requirements to support ECE
 [ INFO  ] c72f4m5u17-ib0 Red Hat Enterprise Linux Server 7.5 is a supported OS to run ECE
 [ INFO  ] c72f4m5u17-ib0 checking packages install status
 [ INFO  ] c72f4m5u17-ib0 installation status of numactl-libs is as expected
@@ -180,12 +182,14 @@ optional arguments:
 [ INFO  ] mestor01 checking processor compatibility
 [ INFO  ] mestor01 x86_64 processor is supported to run ECE
 [ INFO  ] mestor01 checking socket count
-[ INFO  ] mestor01 this system has 4 sockets which complies with the minimum of 2 sockets required to support ECE
+[ INFO  ] mestor01 is Intel based
+[ FATAL ] mestor01 has 4 sockets which is not verified to support ECE
 [ INFO  ] mestor01 checking core count
-[ FATAL ] mestor01 socket 0x0006 has 1 core[s] which is less than 8 cores per socket required to run ECE
-[ FATAL ] mestor01 socket 0x0007 has 1 core[s] which is less than 8 cores per socket required to run ECE
-[ FATAL ] mestor01 socket 0x0004 has 1 core[s] which is less than 8 cores per socket required to run ECE
-[ FATAL ] mestor01 socket 0x0005 has 1 core[s] which is less than 8 cores per socket required to run ECE
+[ FATAL ] mestor01 socket 0x0006 has 1 core[s]
+[ FATAL ] mestor01 socket 0x0007 has 1 core[s]
+[ FATAL ] mestor01 socket 0x0004 has 1 core[s]
+[ FATAL ] mestor01 socket 0x0005 has 1 core[s]
+[ WARN  ] mestor01 has a total of 4 core[s] which is less than 16 cores required to run ECE
 [ INFO  ] mestor01 Red Hat Enterprise Linux Server 7.6 is a supported OS to run ECE
 [ INFO  ] mestor01 checking packages install status
 [ INFO  ] mestor01 installation status of dmidecode is as expected

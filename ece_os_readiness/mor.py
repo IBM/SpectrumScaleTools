@@ -110,7 +110,7 @@ SAS_TOOL_ALIAS = ""
 SAS_TOOL = ""
 
 # Define expected MD5 hashes of JSON input files
-HW_REQUIREMENTS_MD5 = "cde42d073fd4339197f33f0a8ddb7824"
+HW_REQUIREMENTS_MD5 = "a22d65d640888409219d70352dd7228d"
 NIC_ADAPTERS_MD5 = "00412088e36bce959350caea5b490001"
 PACKAGES_MD5 = "a15b08b05998d455aad792ef5d3cc811"
 SAS_ADAPTERS_MD5 = "d06fe3822fabf7798403e74e2796967b"
@@ -232,7 +232,7 @@ def parse_arguments():
         default=True)
 
     parser.add_argument(
-        '--allow_sata',
+        '--allow-sata',
         action='store_true',
         dest='sata_on',
         help='EXPERIMENTAL: To do checks on SATA drives. Do NOT use for real checks',
@@ -599,7 +599,7 @@ def check_processor():
     return fatal_error, current_processor
 
 
-def check_sockets_cores(min_socket, amd_socket, min_cores, AMD_min_cores):
+def check_sockets_cores(min_socket, min_cores):
     fatal_error = False
     cores = []
     if platform.processor() != 's390x':
@@ -613,43 +613,57 @@ def check_sockets_cores(min_socket, amd_socket, min_cores, AMD_min_cores):
             is_EPYC_1st_gen = pattern_EPYC_1st_gen.search(socket_version)
             if is_EPYC_1st_gen:
                 fatal_error = True
-                print(ERROR + LOCAL_HOSTNAME + " AMD EPYC 1st Generation (Naples) is not supported by ECE")
+                print(
+                    ERROR + 
+                    LOCAL_HOSTNAME + 
+                    " AMD EPYC 1st Generation (Naples) is not supported by ECE")
         else:
             is_AMD = False
         num_sockets = len(sockets)
         if is_AMD:
-            min_socket = amd_socket
-            min_cores = AMD_min_cores
             print(
                 INFO +
                 LOCAL_HOSTNAME +
-                " this system is AMD based"
-            )
+                " is AMD based")
         else:
             print(
                 INFO +
                 LOCAL_HOSTNAME +
-                " this system is Intel based"
-            )
-        if num_sockets != min_socket:
+                " is Intel based")
+        if num_sockets < min_socket:
             print(
                 ERROR +
                 LOCAL_HOSTNAME +
-                " this system has " +
+                " has " +
                 str(num_sockets) +
-                " socket[s] which is not " +
+                " socket[s] which is less than " +
                 str(min_socket) +
                 " socket[s] required to support ECE")
             fatal_error = True
+        elif num_sockets <= 2:
+            # Single and dual sockets(Intel or AMD) are supported
+            if is_AMD and num_sockets == 2:
+                print(
+                    WARNING +
+                    LOCAL_HOSTNAME +
+                    " has " +
+                    str(num_sockets) +
+                    " AMD sockets which may need tuning NPS config to get better performance")
+            else:
+                print(
+                    INFO +
+                    LOCAL_HOSTNAME +
+                    " has " +
+                    str(num_sockets) +
+                    " socket[s] which complies with the requirements to support ECE")
         else:
             print(
-                INFO +
+                ERROR +
                 LOCAL_HOSTNAME +
-                " this system has " +
+                " has " +
                 str(num_sockets) +
-                " socket[s] which complies with the number of " +
-                str(min_socket) +
-                " socket[s] required to support ECE")
+                " sockets which is not verified to support ECE")
+            fatal_error = True
 
     print(INFO + LOCAL_HOSTNAME + " checking core count")
     if platform.processor() == 's390x':
@@ -671,10 +685,9 @@ def check_sockets_cores(min_socket, amd_socket, min_cores, AMD_min_cores):
                 LOCAL_HOSTNAME +
                 " has " +
                 str(core_count) +
-                " core[s] which copmplies with " +
-                str(min_cores) +
-                " cores required to support ECE")
+                " core[s] which copmplies with the requirements to support ECE")
     else:
+        total_core_num = 0
         for socket in sockets.keys():
             core_count = sockets[socket]['data']['Core Count']
             # For socket but no chip installed
@@ -683,29 +696,31 @@ def check_sockets_cores(min_socket, amd_socket, min_cores, AMD_min_cores):
             if core_count is None:
                 core_count = 0
             cores.append(core_count)
-            if core_count < min_cores:
-                print(
-                    WARNING +
-                    LOCAL_HOSTNAME +
-                    " socket " +
-                    str(socket) +
-                    " has " +
-                    str(core_count) +
-                    " core[s] which is less than " +
-                    str(min_cores) +
-                    " cores per socket required to run ECE")
-                fatal_error = False
-            else:
-                print(
-                    INFO +
-                    LOCAL_HOSTNAME +
-                    " socket " +
-                    str(socket) +
-                    " has " +
-                    str(core_count) +
-                    " core[s] which complies with " +
-                    str(min_cores) +
-                    " cores per socket required to support ECE")
+            total_core_num = total_core_num + core_count
+            print(
+                INFO +
+                LOCAL_HOSTNAME +
+                " socket " +
+                str(socket) +
+                " has " +
+                str(core_count) +
+                " core[s]")
+        if total_core_num < min_cores:
+            print(
+                WARNING +
+                LOCAL_HOSTNAME +
+                " has a total of " +
+                str(total_core_num) +
+                " core[s] which is less than " +
+                str(min_cores) +
+                " cores required to run ECE")
+        else:
+            print(
+                INFO +
+                LOCAL_HOSTNAME +
+                " has a total of " +
+                str(total_core_num) +
+                " cores which complies with the requirements to support ECE")
     return fatal_error, num_sockets, cores
 
 
@@ -2504,17 +2519,13 @@ def main():
     )
     if platform.processor() == 's390x':
         min_socket = HW_dictionary['MIN_SOCKET_S390X']
-        AMD_socket = 0
-        AMD_min_cores = 0
         min_cores = HW_dictionary['MIN_CORES_S390X']
         min_gb_ram = HW_dictionary['MIN_GB_RAM_S390X']
         max_drives = HW_dictionary['MAX_DRIVES_S390X']
         min_link_speed = HW_dictionary['MIN_LINK_SPEED_S390X']
     else:
         min_socket = HW_dictionary['MIN_SOCKET']
-        AMD_socket = HW_dictionary['AMD_SOCKET']
         min_cores = HW_dictionary['MIN_CORES']
-        AMD_min_cores = HW_dictionary['AMD_CORES']
         min_gb_ram = HW_dictionary['MIN_GB_RAM']
         max_drives = HW_dictionary['MAX_DRIVES']
         min_link_speed = HW_dictionary['MIN_LINK_SPEED']
@@ -2523,12 +2534,8 @@ def main():
     logging.debug(
         "HW requirements are: min_socket " +
         str(min_socket) +
-        " AMD_socket " +
-        str(AMD_socket) +
         " min_cores " +
         str(min_cores) +
-        "AMD_min_cores" +
-        str(AMD_min_cores) +
         " min_gb_ram " +
         str(min_gb_ram) +
         " max_drives " +
@@ -2552,8 +2559,6 @@ def main():
         storage_check,
         net_check,
         min_socket,
-        AMD_socket,
-        AMD_min_cores,
         min_cores,
         min_gb_ram,
         max_drives,
@@ -2603,15 +2608,11 @@ def main():
             "Going to call check_sockets_cores(" +
             str(min_socket) +
             ", " +
-            str(AMD_socket) +
-            ", " +
             str(min_cores) +
-            ", " +
-            str(AMD_min_cores) +
             ")" 
         )
         fatal_error, num_sockets, core_count = check_sockets_cores(
-            min_socket, AMD_socket, min_cores, AMD_min_cores)
+            min_socket, min_cores)
         logging.debug(
             "Got back from check_sockets_cores. fatal_error=" +
             str(fatal_error) +
