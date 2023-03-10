@@ -1,4 +1,4 @@
-In this repository you would find open source tools that are in relation with IBM Spectrum Scale. Unless stated otherwise, the tools compiled in this repository come with no warranty of any kind from IBM.
+In this repository you would find open source tools that are in relation with IBM Storage Scale. Unless stated otherwise, the tools compiled in this repository come with no warranty of any kind from IBM.
 
 **ece_tuned_profile**
 
@@ -18,19 +18,20 @@ In this repository you would find open source tools that are in relation with IB
   
 **ece_storage_readiness**
 
-  Runs a raw read test on storage using FIO tool and presenting the results against IBM Spectrum Scale Key Performance Indicators (KPI). This tool attempts to hide much of the complexity of running network measurement tools, and present the results in an easy to interpret way.
+  Runs a raw read test on storage using FIO tool and presenting the results against IBM Storage Scale Key Performance Indicators (KPI). This tool attempts to hide much of the complexity of running network measurement tools, and present the results in an easy to interpret way.
   
 **ece_capacity_estimator**
 
-  Calculates the effective capacity of Spectrum Scale Native RAID systems. It is an estimation and actual figures could differ from the calculated ones. Be prepared for 1% deviations when using this tool.
+  Calculates the effective capacity of Storage Scale Native RAID systems. It is an estimation and actual figures could differ from the calculated ones. Be prepared for 1% deviations when using this tool.
 
 
 Here are some links to other tools:
- - [IBM Spectrum Scale Bridge for Grafana](https://github.com/IBM/ibm-spectrum-scale-bridge-for-grafana)
- - [IBM Spectrum Scale cloud install](https://github.com/IBM/ibm-spectrum-scale-cloud-install)
- - [IBM Spectrum Scale Container Storage Interface (CSI)](https://github.com/IBM/ibm-spectrum-scale-csi)
- - [IBM Spectrum Scale install infra](https://github.com/IBM/ibm-spectrum-scale-install-infra)
- - [IBM Spectrum Scale Security Posture](https://github.com/IBM/IBM-Spectrum-Scale-Security-Posture)
+ - [IBM Storage Scale Bridge for Grafana](https://github.com/IBM/ibm-spectrum-scale-bridge-for-grafana)
+ - [IBM Storage Scale cloud install](https://github.com/IBM/ibm-spectrum-scale-cloud-install)
+ - [IBM Storage Scale Container Storage Interface (CSI)](https://github.com/IBM/ibm-spectrum-scale-csi)
+ - [IBM Storage Scale install infra](https://github.com/IBM/ibm-spectrum-scale-install-infra)
+ - [IBM Storage Scale Network Readiness](https://github.com/IBM/SpectrumScale_NETWORK_READINESS)
+ - [IBM Storage Scale Security Posture](https://github.com/IBM/IBM-Spectrum-Scale-Security-Posture)
  - [Oracle Cloud Infrastructure IBM Spectrum Scale terraform template](https://github.com/oracle-quickstart/oci-ibm-spectrum-scale)
  - [SpectrumScale_Vagrant](https://github.com/IBM/SpectrumScaleVagrant)
 
