@@ -1,114 +1,118 @@
 This tool will run a network test across multiple nodes and compare the results against IBM Spectrum Scale Key Performance Indicators (KPI).
 This tool attempts to hide much of the complexity of running network measurement tools, and present the results in an easy to interpret way.
 
-**NOTE:** This test can require a long time to execute, depending on the number of nodes. This tool will display an estimated  runtime at startup.
+**NOTE:** This tool would run for a long time, depending on the number of hosts to be tested. It estimates and shows the total runtime before the first interaction.
 
-**WARNING:** This is a network stress tool, hence it will stress the network. If you are using the network for some other service while running this tool you might feel service degradation. This tool, as stated on the license, it comes with no warranty of any kind.
+**WARNING:** This is a network stress tool. Running this tool would seriously affect network traffic. This tool, as stated on the license, it comes with no warranty of any kind.
 
-**Running on RHEL 8.x Systems**
-Because RHEL8 does not define python executable, either version 2 or version 3 needs to be defined as default python using the alternatives command:
+**RHEL 8.x Platform**
+RHEL 8.x does not define default link of /usr/bin/python. Use below command to link default python version to it:
 
 *alternatives --config python*
 
-You must pick either python2 or python3. This tool will work with either python version.  
+You can choose either python2 or python3 as default python version. Both of them are supported by this tool.
 
-An explanation of this can be found in many articles online, for example: https://developers.redhat.com/blog/2018/11/14/python-in-rhel-8/
+**Dependent Software**
 
-**PREREQUISITES:** Before running this tool you **must** install the software prerequisites. Those are:
+* gcc-c++
+* psmisc
+* fping
+* python3-distro if use Python3
 
-* gcc-c++, psmisc, and fping
-* For Python3: python3-distro
+This tool requires the software installed as RPM package. If you do install above software using different method, run this tool with option: ***--rpm_check_disabled***.
+The tool would quit if dependent software was not installed even though you have disabled the check.
 
-The tool expects the SW to be installed as RPM package, and checks for those if you install those by other means you can still run this tool by using the ***--rpm_check_disabled*** flag. But only if you installed the prerequisites, the tool would crash if the SW is not installed and you disable the checks.
+gcc-c++ and psmisc can be found from OS image file.
 
-The gcc-c++ and psmisc RPM packages can be found on the [rhel-7-server-rpms](https://access.redhat.com/solutions/265523)  repository
-
-The fping RPM package can be found on the [EPEL](https://fedoraproject.org/wiki/EPEL) repository, also on [RPMFIND](http://rpmfind.net/linux/rpm2html/search.php?query=fping)
+The fping package can be found from [EPEL](https://fedoraproject.org/wiki/EPEL), [RPMFIND](http://rpmfind.net/linux/rpm2html/search.php?query=fping) or somewhere else.
 
 Remarks:
 
-  - The host where this tool is locally run must be part of the testbed of hosts being tested
-  - As the runtime can be long if you plan to disconnect from the system run the tool with either *screen* or *tmux*. Do not use nohup as it would not spawn the subprocesses correclty
-  - This tool runs on RedHat Enterprise Linux 7.5 or newer and 8.0 or newer on x86_64 and ppc64le mixed architectures.
-  - Only Python standard libraries are used. But for Python3 we would need python3-distro
-  - SSH root passwordless access must be configured from the node that runs the tool to all the nodes that participate in the tests. This tool will log an error if any node does not meet this requirement.
-  - The minimum FPING_COUNT value for a valid ECE test must be 500, and a minimum of 10 (defaults to 500).
-  - The minimum PERF_RUNTIME value for a valid ECE test must be 1200, and a minimum of 30 (defaults to 1200).
-  - The number of hosts must be between 2 and 64. The upper limit is the tested limit. If you need to run it on more nodes contact us.
-  - This tool generates a log directory with all the raw data output for future comparisons
-  - This tool returns 0 if all tests are passed in all nodes, and returns an integer > 0 if any errors are detected.
-  - TCP port 6668 needs to be reachable and not in use in all nodes.
-  - Firewalld must be not running during the test.
-  - This tool needs to be run on a local filesystem. No NFS, Spectrum Scale or alike.
-  - For RDMA tests all Mellanox ports in the system, regardless they are part of the test or not, must be on Infiniband mode, not on Ethernet mode.
-  - When using RDMA the IP addresses to be defined into the test should be the ones that would be part of the admin network on Spectrum Scale. When not using RDMA should be the ones to be on the daemon network.
-  - When using RDMA ports that are tested must be up as shown by [*ibdev2netdev*](https://community.mellanox.com/s/article/ibdev2netdev)
-  - When using RedHat Enterprise Linux 8 series you **must** select a default python version with the command: *alternatives --config python*
-  - When you set a bond device on top of RDMA devices, be sure that ''ibdev2netdev'' reports only ib names not bond names. If it shows bond devices port, those will find as down by this tool
+  - The launcher host of this tool must be a member of the cluster.
+  - Run this tool under *screen* or *tmux* in case of terminal disconnection. Do not use nohup since it would not spawn subprocesses correclty.
+  - This tool runs on RedHat Enterprise Linux 7.5 or newer, on x86_64 and ppc64le architectures.
+  - SSH root passwordless access must be configured from the launcher to all hosts that participate in the test.
+  - The minimum FPING_COUNT value for a valid certification test must be greater than or equal to 500(default).
+  - The minimum PERF_RUNTIME value for a valid certification test must be greater than or equal to 1200(default) seconds.
+  - The number of hosts must be between 2 and 64. Contact IBM if need to run on more hosts.
+  - This tool would generate a log folder in current directory with raw data for future comparisons.
+  - This tool would return 0 if all tests were passed, else, return an integer which is greater than 0.
+  - If use TCP protocol, port 6668 must be idle on all hosts before launch this tool.
+  - If use TCP protocol, the IP addresses followed --hosts must be in daemon network of the cluster.
+  - Firewalld must not be active when this tool is running.
+  - This tool must be run on local filesystem of OS.
+  - If use RDMA protocol, all Mellanox ports must be in Infiniband mode and have the same logical device names.
+  - If use RDMA protocol, the IP addresses followed --hosts should be in admin network of the cluster.
+  - If use RDMA protocol, network device must be Up as shown by command [*ibdev2netdev*](https://community.mellanox.com/s/article/ibdev2netdev).
+  - On RedHat Enterprise Linux 8 platforms, one can select default python version with command: *alternatives --config python*.
+  - If set a bond device based on RDMA devices, be sure that ''ibdev2netdev'' showed ib name instead of bond name.
 
 
-To run the test without a JSON file already populated with the Spectrum Scale daemon IP (if RDMA use the admin ones) addresses and generating one JSON for future runs:
+Typically launch this tool with TCP protocol. Use daemon IP addresses then generate hosts.json for future runs:
 
 ```shell
 # ./koet.py --hosts 10.10.12.92,10.10.12.93,10.10.12.94,10.10.12.95 --save-hosts
 ```
 
-So to run the test with a JSON file already populated with the admin IP addresses: (look at the example already populated one)
+To launch this tool with hosts.json that already populated by above example:
 
 ```shell
 # ./koet.py
 ```
 
-To run a RDMA (testing the availability of ib0 and ib1 on all nodes) test with a JSON already populated:
+To run RDMA test with ib0 and ib1 on all hosts, with hosts.json already populated with admin IP addresses:
+
 ```shell
 # ./koet.py --rdma ib0,ib1
 ```
 
 KNOWN ISSUES:
-  - There are no known issues at this time. If you encounter problems please contact open an issue in our repository (https://github.ibm.com/SpectrumScaleTools/ECE_NETWORK_READINESS/issues)
+  - RoCE protocol test does not supported at present.
+  - If encounter problem please contact IBM.
 
 TODO:
-  - Add precompiled versions of throughput tool so no compiling is needed
-  - Add an option to load previous test results and compare
+  - Add an option to load previous test results then compare.
 
 Usage help:
 ```
 # ./koet.py -h
-usage: koet.py [-h] [-l KPI_LATENCY] [-c FPING_COUNT] [--hosts HOSTS_CSV]
-               [-m KPI_THROUGHPUT] [-p PERF_RUNTIME] [--rdma PORTS_CSV]
-               [--rpm_check_disabled] [--save-hosts] [-v]
+usage: py_ver_koet.py [-h] [--hosts HOSTS_CSV] [--save-hosts] [-c FPING_COUNT]
+                      [-r PERF_RUNTIME] [-l KPI_LATENCY] [-t KPI_THROUGHPUT]
+                      [--rdma PORTS_CSV] [--roce PORTS_CSV]
+                      [--rpm-check-disabled] [-v]
 
 optional arguments:
   -h, --help            show this help message and exit
+  --hosts HOSTS_CSV     IPv4 addresses in CSV format. E.g., IP0,IP1,IP2,IP3
+  --save-hosts          [Over]write hosts.json with IP addresses that passed
+                        the check and followed option: --hosts
+  -c FPING_COUNT, --fping-count FPING_COUNT
+                        count of fping iteration per host. The interval
+                        between each iteration is 1 second. The minimum value
+                        can be set to 2. For certification, it is at least 500
+  -r PERF_RUNTIME, --perf-runtime PERF_RUNTIME
+                        runtime of nsdperf per instance. The minimum value can
+                        be set to 10 seconds. For certification, it is at
+                        least 1200 seconds
   -l KPI_LATENCY, --latency KPI_LATENCY
-                        The KPI latency value as float. The maximum required
-                        value for certification is 1.0 msec
-  -c FPING_COUNT, --fping_count FPING_COUNT
-                        The number of fping counts to run per node and test.
-                        The value has to be at least 2 seconds.The minimum
-                        required value for certification is 500
-  --hosts HOSTS_CSV     IP addresses of hosts on CSV format. Using this
-                        overrides the hosts.json file.
-  -m KPI_THROUGHPUT, --min_throughput KPI_THROUGHPUT
-                        The minimum MB/sec required to pass the test. The
-                        minimum required value for certification is 2000
-  -p PERF_RUNTIME, --perf_runtime PERF_RUNTIME
-                        The seconds of nsdperf runtime per test. The value has
-                        to be at least 10 seconds. The minimum required value
-                        for certification is 1200
-  --rdma PORTS_CSV      Enables RDMA and ports to be check on CSV format
-                        (ib0,ib1,...). Must be using OS device names, not mlx
-                        names.
-  --rpm_check_disabled  Disables the RPM prerequisites check. Use only if you
-                        are sure all required software is installed and no RPM
-                        were used to install the required prerequisites
-  --save-hosts          [over]writes hosts.json with the hosts passed with
-                        --hosts. It does not prompt for confirmation when
-                        overwriting
-  -v, --version         show program version number and exit
+                        latency KPI in floating-point format. The maximum
+                        required value for certification is 1.0 msec
+  -t KPI_THROUGHPUT, --throughput KPI_THROUGHPUT
+                        throughput KPI with unit MB/sec. The minimum required
+                        value for certification is 2000 MB/sec
+  --rdma PORTS_CSV      Enable RDMA check and assign ports in CSV format.
+                        E.g., ib0,ib1. Use logical device name rather than mlx
+                        name
+  --roce PORTS_CSV      Enable RoCE check and assign ports in CSV format.
+                        E.g., eth0,eth1. Use logical device name
+  --rpm-check-disabled  Disable dependent rpm package check. Use this option
+                        only if you are sure that all dependent packages have
+                        been installed
+  -v, --version         show program's version number and exit
 ```
 
-An output example:
+An example with default option using populated hosts.json:
+
 ```
 ./koet.py
 
@@ -143,7 +147,9 @@ They do not necessarily reflect the numbers you would see with Spectrum Scale an
 Do you want to continue? (y/n):
 ```
 
-At this point you can see the estimated runtime, consider using screen or alike. If you modify the number of fpings or the latency KPI you might see warning messages as below:
+You can see the estimated runtime from above output, then consider launching this tool by using *screen* or *tmux*.
+
+If count of fping and runtime of nsdperf are modified, you would see warning messages as follows:
 
 ```
 # ./koet.py -l 1.5 -c 100 -p 10 -m 100
@@ -178,7 +184,7 @@ They do not necessarily reflect that numbers you would see with Spectrum Scale a
 Do you want to continue? (y/n): y
 ```
 
-The following is the output of a successful run. Please notice that the output is color coded.
+The following output comes an example of a successful run with TCP. 
 
 ```
 OK: Red Hat Enterprise Linux Server 7.6 is a supported OS for this tool
@@ -303,7 +309,7 @@ The summary of this run:
 OK: All tests had been passed. You can proceed with the next steps
 ```
 
-And RDMA successful run:
+And a successful example with RDMA:
 
 ```
 # ./koet.py --rdma ib0

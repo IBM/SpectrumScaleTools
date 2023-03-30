@@ -128,93 +128,92 @@ def estimate_runtime(hosts_dictionary, fp_count, perf_runtime):
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    # We include number of runs and KPI as optional arguments
     parser.add_argument(
-        '-l',
-        '--latency',
+        '--hosts',
         action='store',
-        dest='max_avg_latency',
-        help='The KPI latency value as float. ' +
-        'The maximum required value for certification is ' +
-        str(MAX_AVG_LATENCY) +
-        ' msec',
-        metavar='KPI_LATENCY',
-        type=float,
-        default=1.0)
+        dest='hosts',
+        help='IPv4 addresses in CSV format. ' +
+        'E.g., IP0,IP1,IP2,IP3',
+        metavar='HOSTS_CSV',
+        type=str,
+        default="")
+    parser.add_argument(
+        '--save-hosts',
+        action='store_true',
+        dest='save_hosts',
+        help='[Over]write hosts.json with IP addresses that passed ' +
+        'the check and followed option: --hosts',
+        default=False)
     parser.add_argument(
         '-c',
-        '--fping_count',
+        '--fping-count',
         action='store',
         dest='fping_count',
-        help='The number of fping counts to run per node and test. ' +
-        'The value has to be at least 2 seconds.' +
-        'The minimum required value for certification is ' +
+        help='count of fping iteration per host. The interval ' +
+        'between each iteration is 1 second. The minimum value can ' +
+        'be set to 2. For certification, it is at least ' +
         str(FPING_COUNT),
         metavar='FPING_COUNT',
         type=int,
         default=500)
     parser.add_argument(
-        '--hosts',
-        action='store',
-        dest='hosts',
-        help='IP addresses of hosts on CSV format. ' +
-        'Using this overrides the hosts.json file.',
-        metavar='HOSTS_CSV',
-        type=str,
-        default="")
-    parser.add_argument(
-        '-m',
-        '--min_throughput',
-        action='store',
-        dest='perf_throughput',
-        help='The minimum MB/sec required to pass the test. ' +
-        'The minimum required value for certification is ' +
-        str(MIN_NSD_THROUGHPUT),
-        metavar='KPI_THROUGHPUT',
-        type=int,
-        default=2000)
-    parser.add_argument(
-        '-p',
-        '--perf_runtime',
+        '-r',
+        '--perf-runtime',
         action='store',
         dest='perf_runtime',
-        help='The seconds of nsdperf runtime per test. ' +
-        'The value has to be at least 10 seconds. ' +
-        'The minimum required value for certification is ' +
-        str(PERF_RUNTIME),
+        help='runtime of nsdperf per instance. The minimum value ' +
+        'can be set to 10 seconds. For certification, it is at ' +
+        'least ' + str(PERF_RUNTIME) + " seconds",
         metavar='PERF_RUNTIME',
         type=int,
         default=1200)
     parser.add_argument(
+        '-l',         
+        '--latency',  
+        action='store',
+        dest='max_avg_latency',
+        help='latency KPI in floating-point format. ' +
+        'The maximum required value for certification is ' +
+        str(MAX_AVG_LATENCY) +
+        ' msec',      
+        metavar='KPI_LATENCY',
+        type=float,   
+        default=1.0)
+    parser.add_argument(
+        '-t',
+        '--throughput',
+        action='store',
+        dest='perf_throughput',
+        help='throughput KPI with unit MB/sec. ' +
+        'The minimum required value for certification is ' +
+        str(MIN_NSD_THROUGHPUT) +
+        ' MB/sec',
+        metavar='KPI_THROUGHPUT',
+        type=int,
+        default=2000)
+    parser.add_argument(
         '--rdma',
         action='store',
         dest='rdma',
-        help='Enables RDMA and ports to be check on CSV format ' +
-        '(ib0,ib1,...). Must be using OS device names, not mlx names.',
+        help='Enable RDMA check and assign ports in CSV format. E.g., ' +
+        'ib0,ib1. Use logical device name rather than mlx name',
         metavar='PORTS_CSV',
         default="")
     parser.add_argument(
         '--roce',
         action='store',
         dest='roce',
-        help='Enables RoCE and ports to be check on CSV format ' +
-        '(ib0,ib1,...). Must be using OS device names, not mlx names.',
+        help='Enable RoCE check and assign ports in CSV format. E.g., ' +
+        'eth0,eth1. Use logical device name',
         metavar='PORTS_CSV',
         default="")
     parser.add_argument(
-        '--rpm_check_disabled',
+        '--rpm-check-disabled',
         action='store_true',
         dest='no_rpm_check',
-        help='Disables the RPM prerequisites check. Use only if you are ' +
-        'sure all required software is installed and no RPM were used ' +
-        'to install the required prerequisites',
-        default=False)
-    parser.add_argument(
-        '--save-hosts',
-        action='store_true',
-        dest='save_hosts',
-        help='[over]writes hosts.json with the hosts passed with ' +
-        '--hosts. It does not prompt for confirmation when overwriting',
+        help='Disable dependent rpm package check. Use this option ' +
+        'only if you are sure that all dependent packages have been ' +
+        'installed',
         default=False)
 
     parser.add_argument('-v', '--version', action='version',
@@ -1305,7 +1304,7 @@ def throughput_test_os(command, nsd_logfile, client):
         time.sleep(5)
     except BaseException:
         sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Throughput run " + client + "failed unexpectedly " +
+                 "Throughput run " + client + " failed unexpectedly " +
                  " when calling: " + str(command) + "\n")
 
 
@@ -1341,6 +1340,10 @@ def throughput_test(hosts_dictionary,
                 "-R 256 -W 256 -T 256 -d " + logdir + " -s " + \
                 server_csv_str + " -c " + client + " -l " + str(perf_runtime)
         nsd_logfile = open(logdir + "/nsdperfTool_log", "a")
+        if PYTHON3:           
+            command = "python3 {}".format(command)
+        else:                 
+            command = "python2 {}".format(command)
         throughput_test_os(command, nsd_logfile, client)
         nsd_logfile.close()
         # Copy the file to avoid overwrite it
@@ -1378,6 +1381,10 @@ def throughput_test(hosts_dictionary,
             "-R 256 -W 256 -T 256 -d " + logdir + " -s " + \
             servers_csv + " -c " + clients_csv + " -l " + str(perf_runtime)
     nsd_logfile = open(logdir + "/nsdperfTool_log", "a")
+    if PYTHON3:
+        command = "python3 {}".format(command)
+    else:
+        command = "python2 {}".format(command)
     throughput_test_os(command, nsd_logfile, client)
     nsd_logfile.close()
     # Copy the file to avoid overwrite it
@@ -1695,14 +1702,14 @@ def nsd_KPI(min_nsd_throughput,
               "ERROR: " +
               NOCOLOR +
               "the difference of throughput between maximum and minimum " +
-              "values is " + str(abs(100 - pc_diff_bw)) + "%, which is more " +
+              "values is " + str(round((100 - pc_diff_bw), 2)) + "%, which is more " +
               "than 20% defined on the KPI")
     else:
         print(GREEN +
               "OK: " +
               NOCOLOR +
               "the difference of throughput between maximum and minimum " +
-              "values is " + str(abs(100 - pc_diff_bw)) + "%, which is less " +
+              "values is " + str(round((100 - pc_diff_bw), 2)) + "%, which is less " +
               "than 20% defined on the KPI")
 
     print("")
@@ -2109,15 +2116,15 @@ def print_end_summary(a_avg_fp_err, a_nsd_err, lat_kpi_ok,
             GREEN +
             "OK: " +
             NOCOLOR +
-            "All tests had been passed" +
+            "All tests have passed" +
             NOCOLOR)
     else:
         print(
             RED +
             "ERROR: " +
             NOCOLOR +
-            "All test must be passed to certify the environment " +
-            "to proceed with the next steps" +
+            "All tests must be passed to certify the environment " +
+            "before you proceed to the next step" +
             NOCOLOR)
 
     if lat_kpi_ok and fping_kpi_ok and perf_kpi_ok and perf_kpi_ok \
@@ -2126,7 +2133,7 @@ def print_end_summary(a_avg_fp_err, a_nsd_err, lat_kpi_ok,
             GREEN +
             "OK: " +
             NOCOLOR +
-            "You can proceed with the next steps" +
+            "You can proceed to the next step" +
             NOCOLOR)
         valid_test = 0
     else:
@@ -2134,8 +2141,9 @@ def print_end_summary(a_avg_fp_err, a_nsd_err, lat_kpi_ok,
             RED +
             "ERROR: " +
             NOCOLOR +
-            "This run is not valid to certify the environment. " +
-            "You cannot proceed with the next steps" +
+            "This test instance is invalid because KPI was lower than " +
+            "requirement or parameters like count, runtime was " +
+            "not enough. You cannot proceed to the next step" +
             NOCOLOR)
         valid_test = 5
     print("")
