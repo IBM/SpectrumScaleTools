@@ -4,10 +4,9 @@ import argparse
 import csv
 import os
 import sys
-import ast
 import platform
 
-MOR_OVERVIEW_VERSION = "1.8"
+MOR_OVERVIEW_VERSION = "1.81"
 
 # Colorful constants
 RED = '\033[91m'
@@ -89,7 +88,8 @@ def load_json_files_into_ditionary(json_files_path, json_files_list):
     try:
         for json_file in json_files_list:
             json_file_name = open(json_files_path + json_file, 'r')
-            all_json_dict[json_file] = ast.literal_eval(json.load(json_file_name))
+            #all_json_dict[json_file] = ast.literal_eval(json.load(json_file_name))
+            all_json_dict[json_file] = json.load(json_file_name)
         return all_json_dict
     except BaseException:
         sys.exit(

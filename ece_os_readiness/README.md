@@ -25,17 +25,17 @@ This tool does not overrule the official documentation of the product. The requi
 Parameter (--ip) is required, pass the local IP where RAID traffic is going to happen. It must be an IPv4 address rather than a hostname.
 
 ```
-# ./mor.py -h
+# python3 mor.py -h
 usage: mor.py [-h] [--FIPS] --ip IPv4_ADDRESS [--path PATH/] [--no-cpu-check]
               [--no-md5-check] [--no-mem-check] [--no-os-check]
               [--no-packages-check] [--no-net-check] [--no-storage-check]
-              [--no-sysctl-check] [--no-tuned-check] [--toolkit] [-v]
+              [--no-tuned-check] [--allow-sata] [--toolkit] [-V] [-v]
 
 optional arguments:
   -h, --help           show this help message and exit
   --FIPS               Does not run parts of the code that cannot run on FIPS
-                       systems. The run with this parameter is not valid for
-                       acceptance.
+                       systems. The run with this parameter is not complete
+                       and cannot be used for acceptance.
   --ip IPv4_ADDRESS    Local IP address linked to device used for NSD
   --path PATH/         Path where JSON files are located. Defaults to local
                        directory
@@ -46,217 +46,202 @@ optional arguments:
   --no-packages-check  Does not run packages checks
   --no-net-check       Does not run network checks
   --no-storage-check   Does not run storage checks
-  --no-sysctl-check    Does not run sysctl checks
   --no-tuned-check     Does not run tuned checks
+  --allow-sata         EXPERIMENTAL: To do checks on SATA drives. Do NOT use
+                       for real checks
   --toolkit            To indicate is being run from Spectrum Scale install
                        toolkit
-  -v, --version        show program's version number and exit
+  -V, --version        show program's version number and exit
+  -v, --verbose        Shows debug messages on console
 ```
 
   Use --no-*-check parameters to skip certain item checking. In order to install ECE, all the tests must pass on all nodes. You can additionally gather the JSON output files and run ece_os_overview.
 
-  A "good enough" run is shown below:
+  A "good enough" example is as follows:
+
+  ```
+# python3 mor.py --ip 10.168.3.101
+[ INFO  ] c72f3u01 IBM Spectrum Scale Erasure Code Edition OS readiness version 1.71
+[ INFO  ] c72f3u01 This tool comes with absolute not warranty
+[ INFO  ] c72f3u01 Please check https://github.com/IBM/SpectrumScaleTools for details
+[ INFO  ] c72f3u01 JSON files versions:
+[ INFO  ] c72f3u01 	supported OS:		1.7
+[ INFO  ] c72f3u01 	packages: 		1.4
+[ INFO  ] c72f3u01 	SAS adapters:		1.7
+[ INFO  ] c72f3u01 	NIC adapters:		1.1
+[ INFO  ] c72f3u01 	HW requirements:	1.7
+[ INFO  ] c72f3u01 the tool is being run as root
+[ INFO  ] c72f3u01 checking processor compatibility
+[ INFO  ] c72f3u01 x86_64 processor is supported to run ECE
+[ INFO  ] c72f3u01 checking socket count
+[ INFO  ] c72f3u01 is Intel based
+[ INFO  ] c72f3u01 has 2 socket[s] which complies with the requirements to support ECE
+[ INFO  ] c72f3u01 checking core count
+[ INFO  ] c72f3u01 socket 0x0053 has 28 core[s]
+[ INFO  ] c72f3u01 socket 0x0057 has 28 core[s]
+[ INFO  ] c72f3u01 has a total of 56 cores which complies with the requirements to support ECE
+[ INFO  ] c72f3u01 Red Hat Enterprise Linux 8.4 is a supported OS to run ECE
+[ INFO  ] c72f3u01 checking package installation status
+[ INFO  ] c72f3u01 has dmidecode installed as expected
+[ INFO  ] c72f3u01 has pciutils installed as expected
+[ INFO  ] c72f3u01 has sg3_utils installed as expected
+[ INFO  ] c72f3u01 has numactl installed as expected
+[ INFO  ] c72f3u01 has numactl-libs installed as expected
+[ INFO  ] c72f3u01 has tuned installed as expected
+[ INFO  ] c72f3u01 does not have MegaCli installed as expected
+[ INFO  ] c72f3u01 has sqlite installed as expected
+[ INFO  ] c72f3u01 checking memory
+[ INFO  ] c72f3u01 has a total of 251.29 GiB memory which is sufficient to run ECE
+[ WARN  ] c72f3u01 has 8(16 in total) DIMM slot[s] which is not optimal when NVMe drive was used
+[ INFO  ] c72f3u01 all populated DIMM slots have same size
+[ INFO  ] c72f3u01 SAS TOOL:/opt/MegaRAID/storcli/storcli64
+[ INFO  ] c72f3u01 checking SAS adapters
+[ WARN  ] c72f3u01 has a non tested SAS adapter
+[ INFO  ] c72f3u01 has a fabric SAS speed of SAS-12G for its fabric. Please rememeber to run the Storage acceptance tool that can be found at ece_storage_readiness in https://github.com/IBM/SpectrumScaleTools
+[ INFO  ] c72f3u01 checking if software required by SAS was installed
+[ INFO  ] c72f3u01 checking package installation status
+[ INFO  ] c72f3u01 has storcli installed as expected
+[ INFO  ] c72f3u01 has 60 HDD drive[s] on the SAS adapter the same size that ECE can use
+[ INFO  ] c72f3u01 all SAS drives have Volatile Write Cache disabled
+[ WARN  ] c72f3u01 has 0 SSD drive[s] that ECE can use
+[ INFO  ] c72f3u01 checking NVMe drive
+[ INFO  ] c72f3u01 has a total of 4 NVMe drive[s] but more checks are required
+[ INFO  ] c72f3u01 checking if software required by NVMe drive was installed
+[ INFO  ] c72f3u01 checking package installation status
+[ INFO  ] c72f3u01 has nvme-cli installed as expected
+[ INFO  ] c72f3u01 all NVMe drives have the same size
+[ INFO  ] c72f3u01 all NVME drives have Volatile Write Cache disabled
+[ INFO  ] c72f3u01 all NVMe drives have the same LBA size
+[ INFO  ] c72f3u01 all NVMe drives have the same metadata size
+[ INFO  ] c72f3u01 all NVMe drives have 0 metadata size
+[ INFO  ] c72f3u01 all NVMe drives have unique IDs
+[ INFO  ] c72f3u01 has at least one SSD or NVMe device that ECE can use. This is required to run ECE
+[ INFO  ] c72f3u01 has 64 drives that ECE can use
+[ INFO  ] c72f3u01 checking NIC adapters
+[ INFO  ] c72f3u01 has ConnectX-5 adapter which is supported by ECE
+[ INFO  ] c72f3u01 checking 10.168.3.101 device and link speed
+[ INFO  ] c72f3u01 the IP address 10.168.3.101 is found on device ib1
+[ INFO  ] c72f3u01 interface ib1 has a link of 100000 Mb/s. Which is supported to run ECE
+[ INFO  ] c72f3u01 current active profile is spectrumscale-ece
+[ INFO  ] c72f3u01 tuned is matching the active profile
+[ INFO  ] c72f3u01 python 3 YAML module found
+
+	Summary of this standalone run:
+		Run started at 2023-04-06 03:05:55.171947
+		ECE Readiness version 1.71
+		Hostname: c72f3u01
+		OS: Red Hat Enterprise Linux 8.4
+		Architecture: x86_64
+		Sockets: 2
+		Cores per socket: [28, 28]
+		Memory: 251.29 GiBytes
+		DIMM slots: 16
+		DIMM slots in use: 8
+		SAS HBAs in use: NOT TESTED
+		JBOD SAS HDD drives: 60
+		JBOD SAS SSD drives: 0
+		HCAs in use: ConnectX-5
+		NVMe drives: 4
+		Link speed: 100000
+		Run ended at 2023-04-06 03:06:35.504791
+
+		./10.168.3.101.json contains information about this run
+
+[ INFO  ] c72f3u01 can run IBM Spectrum Scale Erasure Code Edition
+  ```
+
+  A failed example is as follows:
 
   ```
 # ./mor.py --ip 10.168.2.17
-[ INFO  ] c72f4m5u17-ib0 IBM Spectrum Scale Erasure Code Edition OS readiness version 1.11
-[ INFO  ] c72f4m5u17-ib0 This tool comes with absolute not warranty
-[ INFO  ] c72f4m5u17-ib0 Please check https://github.com/IBM/SpectrumScaleTools for details
-[ INFO  ] c72f4m5u17-ib0 JSON files versions:
-[ INFO  ] c72f4m5u17-ib0 	supported OS:		1.0
-[ INFO  ] c72f4m5u17-ib0 	sysctl: 		0.7
-[ INFO  ] c72f4m5u17-ib0 	packages: 		1.2
-[ INFO  ] c72f4m5u17-ib0 	SAS adapters:		1.2
-[ INFO  ] c72f4m5u17-ib0 	NIC adapters:		1.0
-[ INFO  ] c72f4m5u17-ib0 	HW requirements:	1.1
-[ INFO  ] c72f4m5u17-ib0 checking processor compatibility
-[ INFO  ] c72f4m5u17-ib0 x86_64 processor is supported to run ECE
-[ INFO  ] c72f4m5u17-ib0 checking socket count
-[ INFO  ] c72f4m5u17-ib0 is Intel based
-[ INFO  ] c72f4m5u17-ib0 has 2 sockets which complies with the requirements to support ECE 
-[ INFO  ] c72f4m5u17-ib0 checking core count
-[ INFO  ] c72f4m5u17-ib0 socket 0x0048 has 10 core[s]
-[ INFO  ] c72f4m5u17-ib0 socket 0x0044 has 10 core[s]
-[ INFO  ] c72f4m5u17-ib0 has a total of 20 cores which complies with the requirements to support ECE
-[ INFO  ] c72f4m5u17-ib0 Red Hat Enterprise Linux Server 7.5 is a supported OS to run ECE
-[ INFO  ] c72f4m5u17-ib0 checking packages install status
-[ INFO  ] c72f4m5u17-ib0 installation status of numactl-libs is as expected
-[ INFO  ] c72f4m5u17-ib0 installation status of numactl is as expected
-[ INFO  ] c72f4m5u17-ib0 installation status of sg3_utils is as expected
-[ INFO  ] c72f4m5u17-ib0 installation status of tuned is as expected
-[ INFO  ] c72f4m5u17-ib0 installation status of dmidecode is as expected
-[ INFO  ] c72f4m5u17-ib0 installation status of pciutils is as expected
-[ INFO  ] c72f4m5u17-ib0 checking memory
-[ INFO  ] c72f4m5u17-ib0 total memory is 125 GB, which is sufficient to run ECE
-[ WARN  ] c72f4m5u17-ib0 not all 24 DIMM slot[s] are populated. This system has 20 empty DIMM slot[s]. This is not recommended to run ECE
-[ INFO  ] c72f4m5u17-ib0 all populated DIMM slots have same memory size of 32767 MB
-[ INFO  ] c72f4m5u17-ib0 checking SAS adapters
-[ INFO  ] c72f4m5u17-ib0 has SAS3516 adapter which is supported by ECE. The disks under this SAS adapter could be used by ECE
-[ INFO  ] c72f4m5u17-ib0 checking that needed software for SAS is installed
-[ INFO  ] c72f4m5u17-ib0 checking packages install status
-[ INFO  ] c72f4m5u17-ib0 installation status of storcli is as expected
-[ INFO  ] c72f4m5u17-ib0 has 3 HDD drive[s] on the SAS adapter the same size that ECE can use
-[ INFO  ] c72f4m5u17-ib0 all SAS drives have Volatile Write Cache disabled
-[ WARN  ] c72f4m5u17-ib0 has 4 SATA SSD drive[s] on the SAS adapter. SATA drives are not supported by ECE. Do not use them for ECE
-[ WARN  ] c72f4m5u17-ib0 no SSD disk[s] usable by ECE found. The drives under SAS controller must be on JBOD mode and be SAS drives
-[ INFO  ] c72f4m5u17-ib0 checking NVMe devices
-[ INFO  ] c72f4m5u17-ib0 has 2 NVMe device[s] detected
-[ INFO  ] c72f4m5u17-ib0 checking that needed software for NVMe is installed
-[ INFO  ] c72f4m5u17-ib0 checking packages install status
-[ INFO  ] c72f4m5u17-ib0 installation status of nvme-cli is as expected
-[ INFO  ] c72f4m5u17-ib0 all NVMe devices have the same size
-[ INFO  ] c72f4m5u17-ib0 all NVMe devices have Volatile Write Cache disabled
-[ INFO  ] c72f4m5u17-ib0 has at least one SSD or NVMe device that ECE can use. This is required to run ECE
-[ INFO  ] c72f4m5u17-ib0 has 5 drives that ECE can use
-[ INFO  ] c72f4m5u17-ib0 checking NIC adapters
-[ INFO  ] c72f4m5u17-ib0 has ConnectX-4 adapter which is supported by ECE
-[ INFO  ] c72f4m5u17-ib0 checking 10.168.2.17 device and link speed
-[ INFO  ] c72f4m5u17-ib0 the IP address 10.168.2.17 is found on device ib0
-[ INFO  ] c72f4m5u17-ib0 interface ib0 has a link of 100000 Mb/s. Which is supported to run ECE
-[ INFO  ] c72f4m5u17-ib0 current active profile is throughput-performance
-[ INFO  ] c72f4m5u17-ib0 tuned profile is fully matching the active profile
-[ INFO  ] c72f4m5u17-ib0 checking sysctl settings
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_sack it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 net.core.rmem_default it is set to the recommended value of 16777216
-[ INFO  ] c72f4m5u17-ib0 net.core.netdev_budget it is set to the recommended value of 600
-[ INFO  ] c72f4m5u17-ib0 net.core.wmem_default it is set to the recommended value of 16777216
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_slow_start_after_idle it is set to the recommended value of 0
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_adv_win_scale it is set to the recommended value of 2
-[ INFO  ] c72f4m5u17-ib0 net.core.rmem_max it is set to the recommended value of 16777216
-[ INFO  ] c72f4m5u17-ib0 net.core.somaxconn it is set to the recommended value of 10000
-[ INFO  ] c72f4m5u17-ib0 vm.min_free_kbytes it is set to the recommended value of 512000
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_tw_reuse it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_tw_recycle it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 kernel.shmmax it is set to the recommended value of 13743895347
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_low_latency it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_window_scaling it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 net.core.optmem_max it is set to the recommended value of 16777216
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_max_syn_backlog it is set to the recommended value of 8192
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_timestamps it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_rmem it is set to the recommended value of 4096 4224000 16777216
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_wmem it is set to the recommended value of 4096 4224000 16777216
-[ INFO  ] c72f4m5u17-ib0 net.core.wmem_max it is set to the recommended value of 16777216
-[ INFO  ] c72f4m5u17-ib0 net.ipv4.tcp_syn_retries it is set to the recommended value of 8
-[ INFO  ] c72f4m5u17-ib0 net.core.netdev_max_backlog it is set to the recommended value of 300000
-[ INFO  ] c72f4m5u17-ib0 kernel.sysrq it is set to the recommended value of 1
-[ INFO  ] c72f4m5u17-ib0 kernel.numa_balancing it is set to the recommended value of 0
+[ INFO  ] c72f4m5u17 IBM Spectrum Scale Erasure Code Edition OS readiness version 1.71
+[ INFO  ] c72f4m5u17 This tool comes with absolute not warranty
+[ INFO  ] c72f4m5u17 Please check https://github.com/IBM/SpectrumScaleTools for details
+[ INFO  ] c72f4m5u17 JSON files versions:
+[ INFO  ] c72f4m5u17 	supported OS:		1.7
+[ INFO  ] c72f4m5u17 	packages: 		1.4
+[ INFO  ] c72f4m5u17 	SAS adapters:		1.7
+[ INFO  ] c72f4m5u17 	NIC adapters:		1.1
+[ INFO  ] c72f4m5u17 	HW requirements:	1.7
+[ INFO  ] c72f4m5u17 the tool is being run as root
+[ INFO  ] c72f4m5u17 checking processor compatibility
+[ INFO  ] c72f4m5u17 x86_64 processor is supported to run ECE
+[ INFO  ] c72f4m5u17 checking socket count
+[ INFO  ] c72f4m5u17 is Intel based
+[ INFO  ] c72f4m5u17 has 2 socket[s] which complies with the requirements to support ECE
+[ INFO  ] c72f4m5u17 checking core count
+[ INFO  ] c72f4m5u17 socket 0x0048 has 10 core[s]
+[ INFO  ] c72f4m5u17 socket 0x0044 has 10 core[s]
+[ INFO  ] c72f4m5u17 has a total of 20 cores which complies with the requirements to support ECE
+[ INFO  ] c72f4m5u17 Red Hat Enterprise Linux Server 7.8 is a supported OS to run ECE
+[ INFO  ] c72f4m5u17 checking package installation status
+[ INFO  ] c72f4m5u17 has sqlite installed as expected
+[ INFO  ] c72f4m5u17 has numactl-libs installed as expected
+[ INFO  ] c72f4m5u17 has numactl installed as expected
+[ INFO  ] c72f4m5u17 has sg3_utils installed as expected
+[ INFO  ] c72f4m5u17 does not have MegaCli installed as expected
+[ INFO  ] c72f4m5u17 has tuned installed as expected
+[ INFO  ] c72f4m5u17 has dmidecode installed as expected
+[ INFO  ] c72f4m5u17 has pciutils installed as expected
+[ INFO  ] c72f4m5u17 checking memory
+[ INFO  ] c72f4m5u17 has a total of 125.0 GiB memory which is sufficient to run ECE
+[ WARN  ] c72f4m5u17 has 4(24 in total) DIMM slot[s] which is not optimal when NVMe drive was used
+[ INFO  ] c72f4m5u17 all populated DIMM slots have same size
+[ INFO  ] c72f4m5u17 SAS TOOL:/opt/MegaRAID/storcli/storcli64
+[ INFO  ] c72f4m5u17 checking SAS adapters
+[ INFO  ] c72f4m5u17 has a fabric SAS speed of SAS-12G for its fabric. Please rememeber to run the Storage acceptance tool that can be found at ece_storage_readiness in https://github.com/IBM/SpectrumScaleTools
+[ INFO  ] c72f4m5u17 has MegaRAID Tri-Mode SAS3516 adapter which is tested by IBM. The disks under this SAS adapter could be used by ECE
+[ INFO  ] c72f4m5u17 checking if software required by SAS was installed
+[ INFO  ] c72f4m5u17 checking package installation status
+[ INFO  ] c72f4m5u17 has storcli installed as expected
+[ INFO  ] c72f4m5u17 has 3 HDD drive[s] on the SAS adapter the same size that ECE can use
+[ FATAL ] c72f4m5u17 134:7 has Write Cache Enabled. This is not supported by ECE
+[ FATAL ] c72f4m5u17 134:6 has Write Cache Enabled. This is not supported by ECE
+[ FATAL ] c72f4m5u17 134:5 has Write Cache Enabled. This is not supported by ECE
+[ WARN  ] c72f4m5u17 has 4 SATA SSD drive[s] on the SAS adapter. SATA drives are not supported by ECE. Do not use them for ECE
+[ WARN  ] c72f4m5u17 has 0 SSD drive[s] that ECE can use
+[ INFO  ] c72f4m5u17 checking NVMe drive
+[ INFO  ] c72f4m5u17 has a total of 2 NVMe drive[s] but more checks are required
+[ INFO  ] c72f4m5u17 checking if software required by NVMe drive was installed
+[ INFO  ] c72f4m5u17 checking package installation status
+[ INFO  ] c72f4m5u17 has nvme-cli installed as expected
+[ INFO  ] c72f4m5u17 all NVMe drives have the same size
+[ INFO  ] c72f4m5u17 all NVME drives have Volatile Write Cache disabled
+[ INFO  ] c72f4m5u17 all NVMe drives have the same LBA size
+[ INFO  ] c72f4m5u17 all NVMe drives have the same metadata size
+[ INFO  ] c72f4m5u17 all NVMe drives have 0 metadata size
+[ INFO  ] c72f4m5u17 all NVMe drives have unique IDs
+[ INFO  ] c72f4m5u17 has at least one SSD or NVMe device that ECE can use. This is required to run ECE
+[ INFO  ] c72f4m5u17 has 5 drives that ECE can use
+[ INFO  ] c72f4m5u17 checking NIC adapters
+[ INFO  ] c72f4m5u17 has ConnectX-4 adapter which is supported by ECE
+[ INFO  ] c72f4m5u17 checking 10.168.2.17 device and link speed
+[ INFO  ] c72f4m5u17 the IP address 10.168.2.17 is found on device ib0
+[ INFO  ] c72f4m5u17 interface ib0 has a link of 100000 Mb/s. Which is supported to run ECE
+[ INFO  ] c72f4m5u17 current active profile is spectrumscale-ece
+[ INFO  ] c72f4m5u17 tuned is matching the active profile
+[ INFO  ] c72f4m5u17 python 3 YAML module found
 
 	Summary of this standalone run:
-		Run started at 2019-11-28 03:59:23.876296
-		ECE Readiness version 1.11
-		Hostname: c72f4m5u17-ib0
-		OS: Red Hat Enterprise Linux Server 7.5
+		Run started at 2023-04-06 03:03:31.265245
+		ECE Readiness version 1.71
+		Hostname: c72f4m5u17
+		OS: Red Hat Enterprise Linux Server 7.8
 		Architecture: x86_64
 		Sockets: 2
 		Cores per socket: [10, 10]
-		Memory: 125 GBytes
+		Memory: 125.0 GiBytes
 		DIMM slots: 24
 		DIMM slots in use: 4
-		SAS HBAs in use: SAS3516
+		SAS HBAs in use: MegaRAID Tri-Mode SAS3516
 		JBOD SAS HDD drives: 3
 		JBOD SAS SSD drives: 0
-		NVMe drives: 2
 		HCAs in use: ConnectX-4
+		NVMe drives: 2
 		Link speed: 100000
-		Run ended at 2019-11-28 03:59:26.514697
+		Run ended at 2023-04-06 03:03:38.310555
 
 		./10.168.2.17.json contains information about this run
 
-[ INFO ] c72f4m5u17-ib0 system can run IBM Spectrum Scale Erasure Code Edition
-  ```
-
-  A failed run is shown below:
-
-  ```
-# ./mor.py --ip 10.10.12.92
-[ INFO  ] mestor01 IBM Spectrum Scale Erasure Code Edition OS readiness version 1.11
-[ INFO  ] mestor01 This tool comes with absolute not warranty
-[ INFO  ] mestor01 Please check https://github.com/IBM/SpectrumScaleTools for details
-[ INFO  ] mestor01 JSON files versions:
-[ INFO  ] mestor01 	supported OS:		0.2
-[ INFO  ] mestor01 	sysctl: 		0.5
-[ INFO  ] mestor01 	packages: 		0.6
-[ INFO  ] mestor01 	SAS adapters:		1.2
-[ INFO  ] mestor01 	NIC adapters:		1.0
-[ INFO  ] mestor01 	HW requirements:	1.0
-[ INFO  ] mestor01 checking processor compatibility
-[ INFO  ] mestor01 x86_64 processor is supported to run ECE
-[ INFO  ] mestor01 checking socket count
-[ INFO  ] mestor01 is Intel based
-[ FATAL ] mestor01 has 4 sockets which is not verified to support ECE
-[ INFO  ] mestor01 checking core count
-[ FATAL ] mestor01 socket 0x0006 has 1 core[s]
-[ FATAL ] mestor01 socket 0x0007 has 1 core[s]
-[ FATAL ] mestor01 socket 0x0004 has 1 core[s]
-[ FATAL ] mestor01 socket 0x0005 has 1 core[s]
-[ WARN  ] mestor01 has a total of 4 core[s] which is less than 16 cores required to run ECE
-[ INFO  ] mestor01 Red Hat Enterprise Linux Server 7.6 is a supported OS to run ECE
-[ INFO  ] mestor01 checking packages install status
-[ INFO  ] mestor01 installation status of dmidecode is as expected
-[ INFO  ] mestor01 installation status of sg3_utils is as expected
-[ INFO  ] mestor01 installation status of pciutils is as expected
-[ INFO  ] mestor01 checking memory
-[ FATAL ] mestor01 total memory is less than 60 GB required to run ECE
-[ WARN  ] mestor01 not all 128 DIMM slot[s] are populated. This system has 127 empty DIMM slot[s]. This is not recommended to run ECE
-[ INFO  ] mestor01 all populated DIMM slots have same memory size of 16384 MB
-[ INFO  ] mestor01 checking SAS adapters
-[ FATAL ] mestor01 does not have any SAS adapter supported by ECE. The disks under any SAS adapter in this system cannot be used by ECE
-[ INFO  ] mestor01 checking NVMe devices
-[ WARN  ] mestor01 no NVMe devices detected
-[ FATAL ] mestor01 has no supported SAS adapter nor NVMe supported devices in this system
-[ INFO  ] mestor01 checking NIC adapters
-[ FATAL ] mestor01 does not have NIC adapter supported by ECE
-[ INFO  ] mestor01 current active profile is throughput-performance
-[ INFO  ] mestor01 tuned is matching the active profile
-[ INFO  ] mestor01 checking sysctl settings
-[ WARN  ] mestor01 net.ipv4.tcp_sack is 1 and should be 0
-[ WARN  ] mestor01 net.core.rmem_default is 212992 and should be 16777216
-[ WARN  ] mestor01 net.core.netdev_budget is 300 and should be 600
-[ WARN  ] mestor01 net.core.wmem_default is 212992 and should be 16777216
-[ WARN  ] mestor01 net.ipv4.tcp_slow_start_after_idle is 1 and should be 0
-[ WARN  ] mestor01 net.ipv4.tcp_adv_win_scale is 1 and should be 2
-[ WARN  ] mestor01 net.core.rmem_max is 212992 and should be 16777216
-[ WARN  ] mestor01 sunrpc.tcp_slot_table_entriescurrent value does not exists
-[ WARN  ] mestor01 net.core.somaxconn is 128 and should be 10000
-[ WARN  ] mestor01 vm.min_free_kbytes is 67584 and should be 512000
-[ WARN  ] mestor01 net.ipv4.tcp_tw_reuse is 0 and should be 1
-[ WARN  ] mestor01 sunrpc.udp_slot_table_entriescurrent value does not exists
-[ WARN  ] mestor01 net.ipv4.tcp_tw_recycle is 0 and should be 1
-[ WARN  ] mestor01 kernel.shmmax is 18446744073692774399 and should be 13743895347
-[ WARN  ] mestor01 net.ipv4.tcp_low_latency is 0 and should be 1
-[ INFO  ] mestor01 net.ipv4.tcp_window_scaling it is set to the recommended value of 1
-[ WARN  ] mestor01 net.core.optmem_max is 20480 and should be 16777216
-[ WARN  ] mestor01 net.ipv4.tcp_max_syn_backlog is 512 and should be 8192
-[ WARN  ] mestor01 net.ipv4.tcp_timestamps is 1 and should be 0
-[ WARN  ] mestor01 net.ipv4.tcp_rmem is 4096 87380 6291456 and should be 4096 4224000 16777216
-[ WARN  ] mestor01 net.ipv4.tcp_wmem is 4096 16384 4194304 and should be 4096 4224000 16777216
-[ WARN  ] mestor01 net.core.wmem_max is 212992 and should be 16777216
-[ WARN  ] mestor01 net.ipv4.tcp_syn_retries is 6 and should be 8
-[ WARN  ] mestor01 net.core.netdev_max_backlog is 1000 and should be 300000
-[ WARN  ] mestor01 kernel.sysrq is 16 and should be 1
-[ INFO  ] mestor01 kernel.numa_balancing it is set to the recommended value of 0
-[ FATAL ] mestor01 24 sysctl setting[s] need to be changed. Check information above this message
-
-	Summary of this standalone run:
-		Run started at 2019-11-28 10:46:54.722355
-		ECE Readiness version 1.11
-		Hostname: mestor01
-		OS: Red Hat Enterprise Linux Server 7.6
-		Architecture: x86_64
-		Sockets: 4
-		Cores per socket: [1, 1, 1, 1]
-		Memory: 15 GBytes
-		DIMM slots: 128
-		DIMM slots in use: 1
-		SAS HBAs in use:
-		JBOD SAS HDD drives: 0
-		JBOD SAS SSD drives: 0
-		NVMe drives: 0
-		HCAs in use:
-		Link speed: NOT CHECKED
-		Run ended at 2019-11-28 10:46:55.923375
-
-		./10.10.12.92.json contains information about this run
-
-[ FATAL ] mestor01 system cannot run IBM Spectrum Scale Erasure Code Edition
+[ FATAL ] c72f4m5u17 cannot run IBM Spectrum Scale Erasure Code Edition
   ```

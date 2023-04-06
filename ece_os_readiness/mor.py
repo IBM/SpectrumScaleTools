@@ -31,7 +31,7 @@ else:
 start_time_date = datetime.datetime.now()
 
 # This script version, independent from the JSON versions
-MOR_VERSION = "1.63"
+MOR_VERSION = "1.71"
 
 # GIT URLs
 GITREPOURL = "https://github.com/IBM/SpectrumScaleTools"
@@ -58,7 +58,7 @@ WWNPATT = re.compile('.*"WWN"\s*:\s*"(?P<wwn>.*)"')
 OSVERPATT = re.compile('(?P<major>\d+)[\.](?P<minor>\d+)[\.].*')
 PCIPATT = re.compile('(?P<pciaddr>[a-fA-f0-9]{2}:[a-fA-f0-9]{2}[\.][0-9])'
                      '[\ ](?P<pcival>.*)')
-                     
+
 # Next are python modules that need to be checked before import
 if platform.processor() != 's390x':
     try:
@@ -111,9 +111,9 @@ SAS_TOOL = ""
 
 # Define expected MD5 hashes of JSON input files
 HW_REQUIREMENTS_MD5 = "a22d65d640888409219d70352dd7228d"
-NIC_ADAPTERS_MD5 = "00412088e36bce959350caea5b490001"
+NIC_ADAPTERS_MD5 = "27717648c59c586b4bdac4f1f624502f"
 PACKAGES_MD5 = "a15b08b05998d455aad792ef5d3cc811"
-SAS_ADAPTERS_MD5 = "d06fe3822fabf7798403e74e2796967b"
+SAS_ADAPTERS_MD5 = "36f40c9b3f4e8d935304ffbca3be8a87"
 SUPPORTED_OS_MD5 = "4153f6b62aa2ce4f4c3de4e3db422745"
 
 # Functions
@@ -123,7 +123,7 @@ def set_logger_up(output_dir, log_file, verbose):
             os.makedirs(output_dir)
         except BaseException:
             sys.exit(
-                ERROR + 
+                ERROR +
                 LOCAL_HOSTNAME +
                 " Cannot create " + 
                 output_dir
@@ -133,7 +133,7 @@ def set_logger_up(output_dir, log_file, verbose):
             format=log_format,
             filename=log_file,
             filemode='w')
- 
+
     console = logging.StreamHandler()
     if verbose:
         console.setLevel(logging.DEBUG)
@@ -359,12 +359,38 @@ def md5_verify(md5_check, json_file_str, md5_hash_real, md5_hash_expected):
             " MD5 hash failed to verify file: " +
             json_file_str)
         return False
-        
+
+
 def convert_to_bytes(size, unit):
-    unit_dict = { "KB":10**3, "MB":10**6,"GB":10**9, "TB":10**12, "KiB":2**10, "MiB":2**20, "GiB":2**30, "TiB": 2**40 }
+    """
+    Params:
+        size - digit
+        unit - unit of size
+    Returns:
+        Directly exits if hit fatal error
+        size_in_bytes - Convert size and unit to size in bytes
+    """
+    if size and isinstance(size, int):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter size({2})".
+            format(ERROR, LOCAL_HOSTNAME, size))
+
+    if unit and isinstance(unit, str) and \
+       unit in ('KB', 'MB', 'GB', 'TB', 'KiB', 'MiB', 'GiB', 'TiB'):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter unit({2})".
+            format(ERROR, LOCAL_HOSTNAME, size))
+
+    unit_dict = {"KB":10**3, "MB":10**6,"GB":10**9, "TB":10**12,
+                 "KiB":2**10, "MiB":2**20, "GiB":2**30, "TiB": 2**40}
+
     size_in_bytes = -1
     if unit in unit_dict.keys():
+        # Would not hit KeyError here. unit is well checked
         size_in_bytes = size * unit_dict[unit]
+
     return size_in_bytes
 
 
@@ -411,14 +437,64 @@ def show_header(moh_version, json_version, toolkit_run):
         json_version['HW_requirements'])
 
 
-def rpm_is_installed(rpm_package):
-    # returns the RC of rpm -q rpm_package or quits if it cannot run rpm
+def run_shell_cmd(cmd, ignore_exception=False):
+    """
+    Params:
+        cmd - command line string
+        ignore_exception - False, by default, exit if hit exception
+                           True, do not exit, push exception to stderr
+    Returns:
+        (stdout, stderr, returncode)
+    """
+    if cmd and isinstance(cmd, str):
+        pass
+    else:
+        if ignore_exception:
+            return '', "Invalid command({}) to run".format(cmd), 1
+        else:
+            sys.exit("{0}{1} invalid parameter cmd({2})".
+                format(ERROR, LOCAL_HOSTNAME, cmd))
     try:
-        return_code = subprocess.call(
-            ['rpm', '-q', rpm_package], stdout=DEVNULL, stderr=DEVNULL)
-    except BaseException:
-        sys.exit(ERROR + LOCAL_HOSTNAME + " cannot run rpm")
-    return return_code
+        proc = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE, stdin=None)
+        stdout, stderr = proc.communicate()
+        rc = proc.returncode
+    except BaseException as e:
+        if ignore_exception:
+            return '', "{}".format(e), 1
+        else:
+            sys.exit("{0}{1} excuted cmd: {2}. Hit exception: {3}".
+                format(ERROR, LOCAL_HOSTNAME, cmd, e))
+
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode()
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode()
+
+    return str(stdout), str(stderr), int(rc)
+
+
+def is_pkg_installed(rpm_package):
+    """
+    Params:
+        rpm_package - Keyword of package to be checked
+    Returns:
+        0 if package is installed, else,
+        1
+    """
+    if rpm_package:
+        if isinstance(rpm_package, str) or isinstance(rpm_package, unicode):
+            pass
+        else:
+            sys.exit("{0}{1} invalid parameter rpm_package({2})".
+                format(ERROR, LOCAL_HOSTNAME, rpm_package))
+    else:
+        sys.exit("{0}{1} empty parameter rpm_package".
+            format(ERROR, LOCAL_HOSTNAME))
+
+    cmd = "rpm -q {}".format(rpm_package)
+    _, _, rc = run_shell_cmd(cmd)
+    return rc
 
 
 def is_IP_address(ip):
@@ -466,16 +542,161 @@ def what_interface_has_ip(net_devices, ip_address):
     return fatal_error, "NONE"
 
 
+def is_ipv4(ipv4):
+    """
+    Params:
+        ipv4 - Standard IPv4 format
+    Returns:
+        bool - True if yes, else, False
+    """
+    if ipv4 and isinstance(ipv4, str):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter ipv4({2})".
+            format(ERROR, LOCAL_HOSTNAME, ipv4))
+
+    ipv4_seg_list = ipv4.split('.')
+    ipv4_seg_num = len(ipv4_seg_list)
+    if ipv4_seg_num != 4:
+        print("{0}{1} segment number({2}) of dotted IPv4({3}) is invalid".
+            format(ERROR, LOCAL_HOSTNAME, ipv4_seg_num, ipv4))
+        return False
+
+    for seg in ipv4_seg_list:
+        if not seg.isdigit():
+            print("{0}{1} segment({2}) in IPv4({3}) is non-numeric".
+                format(ERROR, LOCAL_HOSTNAME, seg, ipv4))
+            return False
+        try:
+            digit_seg = int(seg)
+        except ValueError as e:
+            sys.exit("{0}{1} tried to convert segment({2}). Hit ".
+                format(ERROR, LOCAL_HOSTNAME, seg) + "ValueError: {}".
+                format(e))
+        if digit_seg < 0 or digit_seg > 255:
+            print("{0}{1} segment({2}) in IPv4({3}) is invalid".
+                format(ERROR, LOCAL_HOSTNAME, seg, ipv4))
+            return False
+
+    return True
+
+
+def map_ipv4_to_local_interface(ipv4):
+    """
+    Params:
+        ipv4 - Standard IPv4 format
+    Returns:
+        Directly exits if hit fatal error
+        ipv4_dict -
+            If mapped successfully:
+                {'IPv4': 'local active network interface'}
+            else:
+                {'IPv4': ''}
+    """
+    if ipv4 and isinstance(ipv4, str):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter ipv4({2})".
+            format(ERROR, LOCAL_HOSTNAME, ipv4))
+
+    ipv4_dict = {}
+    is_ipv4_ok = is_ipv4(ipv4)
+    if not is_ipv4_ok:
+        sys.exit("{0}{1} invalid ipv4({2}) format".
+            format(ERROR, LOCAL_HOSTNAME, ipv4))
+
+    try:
+        active_dev_list = ethtool.get_active_devices()
+    except BaseException as e:
+        sys.exit("{0}{1} tried to query active network device. Hit ".
+            format(ERROR, LOCAL_HOSTNAME) + "exception: {}".format(e))
+
+    if not active_dev_list:
+        sys.exit("{0}{1} no active network device found".
+            format(ERROR, LOCAL_HOSTNAME))
+
+    for dev in active_dev_list:
+        try:
+            ip_of_dev = ethtool.get_ipaddr(dev)
+        except BaseException as e:
+            logging.debug("Tried to get ipaddr but hit exception: %s", e)
+            continue
+        if ip_of_dev == ipv4:
+            ipv4_dict[ipv4] = dev
+
+    if not ipv4_dict:
+        print("{0}{1} has no IP {2} set to local active network device".
+            format(ERROR, LOCAL_HOSTNAME, ipv4))
+        ipv4_dict[ipv4] = ''
+
+    return ipv4_dict
+
+
+def map_netif_to_product():
+    """
+    Params:
+    Returns:
+        Directly exits if hit fatal error
+        netif_dict - {
+            'network interface logical name 0': 'product name 0',
+            'network interface logical name 1': 'product name 1',
+            ...
+        }
+    """
+    cmd = "lshw -class network -quiet"
+    cmd_out, _, _ = run_shell_cmd(cmd)
+    cmd_out = cmd_out.strip()
+    if not cmd_out:
+        sys.exit("{0}{1} got nothing by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+
+    lshw_out_lines = cmd_out.splitlines()
+    reversed_lshw_lines = list(reversed(lshw_out_lines))
+    netif_dict = {}
+    if_key = ''
+    for line in reversed_lshw_lines:
+        line = line.strip()
+        # Refresh product_str for each interation
+        product_str = ''
+        if 'logical name:' in line:
+            try:
+                if_key = line.split()[-1].strip()
+            except BaseException as e:
+                print("{0}{1} tried to extract network logical name ".
+                    format(WARNING, LOCAL_HOSTNAME) +
+                    "form {0}. Hit exception: {1}".format(line, e))
+        if not if_key:
+            # Skip if got empty logical name
+            continue
+        if 'product:' in line:
+            try:
+                product_str = line.split('product:')[-1].strip()
+            except BaseException as e:
+                print("{0}{1} tried to extract product name from {2}.".
+                    format(WARNING, LOCAL_HOSTNAME, line) +
+                    "Hit exception: {}".format(e))
+        if not product_str:
+            # Skip if got empty product name
+            continue
+        netif_dict[if_key] = product_str
+
+    if not netif_dict:
+        print("{0}{1} failed to map logical-name to product-name ".
+            format(ERROR, LOCAL_HOSTNAME) + "for network interface")
+
+    return netif_dict
+
+
 def check_NIC_speed(net_interface, min_link_speed):
     fatal_error = False
     device_speed = 0
     try:
         if PYTHON3:
             ethtool_out = subprocess.getoutput(
-                'ethtool ' + net_interface + ' | grep "Speed:"').split()
+                'ethtool ' + str(net_interface) + ' | grep "Speed:"').split()
         else:
             ethtool_out = commands.getoutput(
-                'ethtool ' + net_interface + ' | grep "Speed:"').split()
+                'ethtool ' + str(net_interface) + ' | grep "Speed:"').split()
         device_speed = ''.join(ethtool_out[1].split())
         device_speed = device_speed[:-4]
         device_speed = device_speed[-6:]
@@ -504,7 +725,7 @@ def check_NIC_speed(net_interface, min_link_speed):
             ERROR +
             LOCAL_HOSTNAME +
             " cannot determine link speed on " +
-            net_interface +
+            str(net_interface) +
             ". Is the link up?")
     return fatal_error, device_speed
 
@@ -522,34 +743,193 @@ def check_root_user():
                  " this tool needs to be run as root\n")
 
 
-def packages_check(packages_dictionary):
+def check_vmware_nic(ip_if_dict,
+                     net_check,
+                     supported_nic_dict,
+                     min_link_speed):
+    """
+    Params:
+        ip_if_dict - {'IPv4': 'local active network interface'}
+        net_check - True if network checking is required, else, False
+        supported_nic_dict - supported NIC in NIC_adapters.json
+        min_link_speed - MIN_LINK_SPEED in HW_requirements.json
+    Returns:
+        Directly exits if hit fatal error
+        error_count - count of error
+        outputfile_segment_dict - segment of outputfile
+    Remarks:
+        Simulate physical checking
+        At present, this function does not support network with bond, RDMA, RoCE
+    """
+    if ip_if_dict and isinstance(ip_if_dict, dict) and len(ip_if_dict) == 1:
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter ip_if_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, ip_if_dict))
 
-    # Checks if packages from JSON are installed or not based on the input
-    # data ont eh JSON
-    errors = 0
-    print(INFO + LOCAL_HOSTNAME + " checking packages install status")
-    for package in packages_dictionary.keys():
+    if net_check and isinstance(net_check, bool):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter net_check({2})".
+            format(ERROR, LOCAL_HOSTNAME, net_check))
+
+    if supported_nic_dict and isinstance(supported_nic_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter supported_nic_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, supported_nic_dict))
+
+    if min_link_speed and isinstance(min_link_speed, int):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter min_link_speed({2})".
+            format(ERROR, LOCAL_HOSTNAME, min_link_speed))
+
+    outputfile_segment_dict = {}
+    outputfile_segment_dict['local_hostname'] = LOCAL_HOSTNAME
+
+    error_count = 0
+    ip_addr = ''
+    netif_with_ip = ''
+    for key, val in ip_if_dict.items():
+        ip_addr = key
+        netif_with_ip = val
+    logging.debug("From ip_if_dict, Got netif_with_ip=%s", netif_with_ip)
+
+    if not ip_addr:
+        error_count += 1
+        outputfile_segment_dict['IP_address_is_possible'] = False
+        outputfile_segment_dict['ip_address'] = ''
+        outputfile_segment_dict['IP_not_found'] = True
+        print("{0}{1} cannot extract IP address from {2}".
+            format(ERROR, LOCAL_HOSTNAME, ip_if_dict))
+    else:
+        outputfile_segment_dict['IP_address_is_possible'] = True
+        outputfile_segment_dict['ip_address'] = ip_addr
+        outputfile_segment_dict['IP_not_found'] = False
+
+    if not net_check:
+        return error_count, outputfile_segment_dict
+
+    print("{0}{1} checking NIC".format(INFO, LOCAL_HOSTNAME))
+
+    if not netif_with_ip:
+        error_count += 1
+        outputfile_segment_dict['error_NIC_card'] = True
+        outputfile_segment_dict['NIC_model'] = []
+        outputfile_segment_dict['netdev_with_IP'] = ''
+        print("{0}{1} cannot extract logical network interface of {2}".
+            format(ERROR, LOCAL_HOSTNAME, ip_addr))
+    else:
+        outputfile_segment_dict['netdev_with_IP'] = netif_with_ip
+
+    all_netif_list = []
+    nic_product_name = ''
+    ok_nic_product_list = []
+    netif_dict = map_netif_to_product()
+    logging.debug("Called map_netif_to_product, got netif_dict=%s", netif_dict)
+    if netif_dict:
+        all_netif_list = [key for key in netif_dict]
+
+    logging.debug("From netif_dict, Got all_netif_list=%s", all_netif_list)
+    if not all_netif_list:
+        error_count += 1
+        outputfile_segment_dict['ALL_net_devices'] = []
+        print("{0}{1} cannot extract any network device".
+            format(ERROR, LOCAL_HOSTNAME))
+    else:
+        # Implies netif_dict is existed
+        outputfile_segment_dict['ALL_net_devices'] = all_netif_list
+        if netif_with_ip:
+            try:
+                nic_product_name = netif_dict[netif_with_ip]
+            except KeyError as e:
+                error_count += 1
+                print("{0}{1} tried to extract product name of {2}. Hit ".
+                    format(ERROR, LOCAL_HOSTNAME, netif_with_ip) +
+                    "KeyError: {}".format(e))
+
+            if not nic_product_name:
+                error_count += 1
+                outputfile_segment_dict['error_NIC_card'] = True
+                outputfile_segment_dict['NIC_model'] = []
+                print("{0}{1} cannot extract any proper NIC product name".
+                    format(ERROR, LOCAL_HOSTNAME))
+        logging.debug("From netif_dict, Got nic_product_name=%s", nic_product_name)
+
+    if nic_product_name:
+        ok_nic_product_list = \
+            [nic_product_name for key in supported_nic_dict if key in nic_product_name]
+    logging.debug("From supported_nic_dict=%s, got ok_nic_product_list=%s",
+        supported_nic_dict, ok_nic_product_list)
+
+    if not ok_nic_product_list:
+        outputfile_segment_dict['error_NIC_card'] = True
+        outputfile_segment_dict['NIC_model'] = []
+        print("{0}{1} has no supported NIC that can be used by ECE".
+            format(ERROR, LOCAL_HOSTNAME))
+    else:
+        outputfile_segment_dict['error_NIC_card'] = False
+        outputfile_segment_dict['NIC_model'] = ok_nic_product_list
+        print("{0}{1} has {2} which could be used by ECE".
+            format(INFO, LOCAL_HOSTNAME, ", ".join(ok_nic_product_list)))
+
+    if netif_with_ip:
+        netif_speed_err, netif_speed = \
+            check_NIC_speed(netif_with_ip, min_link_speed)
+        logging.debug("Called check_NIC_speed, Got netif_speed_err=%s, netif_speed=%s",
+                      netif_speed_err, netif_speed)
+        outputfile_segment_dict['netdev_speed_error'] = netif_speed_err
+        outputfile_segment_dict['netdev_speed'] = netif_speed
+        if netif_speed_err:
+            error_count += 1
+    else:
+        error_count += 1
+        outputfile_segment_dict['netdev_speed_error'] = True
+        outputfile_segment_dict['netdev_speed'] = 'NOT CHECKED'
+
+    return error_count, outputfile_segment_dict
+
+
+def package_check(pkg_dict):
+    """
+    Params:
+        pkg_dict - {'keyword': expected_return_code}
+    Returns:
+        error_count - count of error
+    """
+    if pkg_dict and isinstance(pkg_dict, dict):
+        pass
+    else:
+        print("{0}{1} invalid parameter pkg_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME))
+        return 1
+
+    print("{0}{1} checking package installation status".
+        format(INFO, LOCAL_HOSTNAME))
+
+    error_count = 0
+    for package in pkg_dict.keys():
         if platform.processor() == 's390x' and package == 'dmidecode':
             continue
-        if package != "json_version":
-            current_package_rc = rpm_is_installed(package)
-            expected_package_rc = packages_dictionary[package]
-            if current_package_rc == expected_package_rc:
-                print(
-                    INFO +
-                    LOCAL_HOSTNAME +
-                    " installation status of " +
-                    package +
-                    " is as expected")
-            else:
-                print(
-                    WARNING +
-                    LOCAL_HOSTNAME +
-                    " installation status of " +
-                    package +
-                    " is *NOT* as expected")
-                errors = errors + 1
-    return(errors)
+        if package == "json_version":
+            continue
+        current_package_rc = is_pkg_installed(package)
+        inst_stat = ''
+        if current_package_rc == 0:
+            inst_stat = "has {} installed".format(package)
+        else:
+            inst_stat = "does not have {} installed".format(package)
+        expected_package_rc = pkg_dict[package]
+        if current_package_rc == expected_package_rc:
+            print("{0}{1} {2} as expected".
+                format(INFO, LOCAL_HOSTNAME, inst_stat))
+        else:
+            print("{0}{1} {2} *NOT* as expected".
+                format(ERROR, LOCAL_HOSTNAME, inst_stat))
+            error_count += 1
+
+    return error_count
 
 
 def get_system_serial():
@@ -561,21 +941,18 @@ def get_system_serial():
     try:
         if PYTHON3:
             system_serial = subprocess.getoutput(
-                "dmidecode -s system-serial-number"
-            )
+                "dmidecode -s system-serial-number")
         else:
             system_serial = commands.getoutput(
-                "dmidecode -s system-serial-number"
-            )
+                "dmidecode -s system-serial-number")
     except BaseException:
         fatal_error = True
         print(
             WARNING +
             LOCAL_HOSTNAME +
-            " cannot query system serial"
-            )
+            " cannot query system serial")
     return fatal_error, system_serial
-        
+
 
 def check_processor():
     fatal_error = False
@@ -599,10 +976,131 @@ def check_processor():
     return fatal_error, current_processor
 
 
+def detect_virtualization():
+    """
+    Params:
+    Returns:
+        'error' - if hit error
+        output of command: systemd-detect-virt
+        'vmware' - if OS was running on VMware
+        'none' - if OS was running on physical machine
+        ...
+    """
+    cmd = 'systemd-detect-virt'
+    virt_type, err, _ = run_shell_cmd(cmd)
+    virt_type = virt_type.strip()
+    err = err.strip()
+    if err:
+        print("{0}{1} executed cmd: {2}. Got stderr: {3}".
+            format(ERROR, LOCAL_HOSTNAME, cmd, err))
+        return 'error'
+    if not virt_type:
+        print("{0}{1} cannot detect the virtualized environment by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+        return 'error'
+
+    if virt_type == 'none':
+        # Physical environment
+        pass
+    elif virt_type == 'vmware':
+        product = ''
+        get_product_name_cmd = 'cat /sys/class/dmi/id/product_name'
+        product, _, _ = run_shell_cmd(get_product_name_cmd, True)
+        product = product.strip()
+        if product:
+            print("{0}{1} is virtual machine running on {2}".
+                format(INFO, LOCAL_HOSTNAME, product))
+    else:
+        print("{0}{1} is virtual machine running on virtualized environment({2}) ".
+            format(ERROR, LOCAL_HOSTNAME, virt_type) +
+            "which is not verified to support ECE")
+
+    return virt_type
+
+
+def get_cpu_socket_core_num_by_lscpu():
+    """
+    Params:
+    Returns:
+        (socket_num, total_core_num, core_list)
+        socket_num - int
+        total_core_num - int
+        core_list - list
+    """
+    cmd = 'lscpu'
+    socket_num = 0
+    core_list = []
+
+    cmd_out, err, _ = run_shell_cmd(cmd)
+    cmd_out = cmd_out.strip()
+    err = err.strip()
+    if err:
+        print("{0}{1} queried socket or core information by running cmd: {2}. ".
+            format(ERROR, LOCAL_HOSTNAME, cmd) +
+            "Hit error: {}".format(err))
+        return 0, 0, []
+    if not cmd_out:
+        print("{0}{1} got empty socket or core information by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+        return 0, 0, []
+
+    out_lines = cmd_out.splitlines()
+    core_per_socket = 0
+    for line in out_lines:
+        if 'Socket(s):' in line:
+            try:
+                socket_num = int(line.split()[-1])
+            except BaseException as e:
+                print("{0}{1} tried to extract socket number. Hit exception: {2}".
+                    format(ERROR, LOCAL_HOSTNAME, e))
+                return 0, 0, []
+            if socket_num < 1:
+                print("{0}{1} got invalid socket number {2} by running cmd: {3}".
+                    format(ERROR, LOCAL_HOSTNAME, socket_num, cmd))
+                return 0, 0, []
+
+        if 'Core(s) per socket:' in line:
+            try:
+                core_per_socket = int(line.split()[-1])
+            except BaseException as e:
+                print("{0}{1} cannot extract number of core per socket. ".
+                    format(ERROR, LOCAL_HOSTNAME) + "Hit exception: {}".
+                    format(e))
+                return socket_num, 0, []
+            if core_per_socket < 1:
+                print("{0}{1} got invalid core-per-socket {2} by running cmd: ".
+                    format(ERROR, LOCAL_HOSTNAME, core_per_socket) +
+                    "{}".format(cmd))
+                return socket_num, 0, []
+
+    # Keyword 'Socket(s):' is not in output of lscpu
+    if socket_num < 1:
+        print("{0}{1} cannot extract socket number by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+        return 0, 0, []
+
+    # Keyword 'Core(s) per socket:' is not in output of lscpu
+    if core_per_socket < 1:
+        print("{0}{1} cannot extract core-per-socket by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+        return socket_num, 0, []
+
+    total_core_num = socket_num * core_per_socket
+    core_list.append(core_per_socket)
+    core_list *= socket_num
+
+    return socket_num, total_core_num, core_list
+
+
 def check_sockets_cores(min_socket, min_cores):
     fatal_error = False
     cores = []
-    if platform.processor() != 's390x':
+    num_sockets = 0
+    virt_type = detect_virtualization()
+    logging.debug("Called detect_virtualization, got virt_type=%s", virt_type)
+    if virt_type not in ('vmware', 'none'):
+        sys.exit(1)
+    if platform.processor() != 's390x' and virt_type == 'none':
         print(INFO + LOCAL_HOSTNAME + " checking socket count")
         sockets = dmidecode.processor()
         for socket in sockets.keys():
@@ -614,8 +1112,8 @@ def check_sockets_cores(min_socket, min_cores):
             if is_EPYC_1st_gen:
                 fatal_error = True
                 print(
-                    ERROR + 
-                    LOCAL_HOSTNAME + 
+                    ERROR +
+                    LOCAL_HOSTNAME +
                     " AMD EPYC 1st Generation (Naples) is not supported by ECE")
         else:
             is_AMD = False
@@ -668,6 +1166,8 @@ def check_sockets_cores(min_socket, min_cores):
     print(INFO + LOCAL_HOSTNAME + " checking core count")
     if platform.processor() == 's390x':
         cores =  core_count = multiprocessing.cpu_count()
+        core_count = int(multiprocessing.cpu_count())
+        cores.append(core_count)
         num_sockets = min_socket
         if core_count < min_cores:
             print(
@@ -688,39 +1188,66 @@ def check_sockets_cores(min_socket, min_cores):
                 " core[s] which copmplies with the requirements to support ECE")
     else:
         total_core_num = 0
-        for socket in sockets.keys():
-            core_count = sockets[socket]['data']['Core Count']
-            # For socket but no chip installed
-            if core_count == "None":
-                core_count = 0
-            if core_count is None:
-                core_count = 0
-            cores.append(core_count)
-            total_core_num = total_core_num + core_count
-            print(
-                INFO +
-                LOCAL_HOSTNAME +
-                " socket " +
-                str(socket) +
-                " has " +
-                str(core_count) +
-                " core[s]")
-        if total_core_num < min_cores:
-            print(
-                WARNING +
-                LOCAL_HOSTNAME +
-                " has a total of " +
-                str(total_core_num) +
-                " core[s] which is less than " +
-                str(min_cores) +
-                " cores required to run ECE")
-        else:
-            print(
-                INFO +
-                LOCAL_HOSTNAME +
-                " has a total of " +
-                str(total_core_num) +
-                " cores which complies with the requirements to support ECE")
+        if virt_type == 'none':
+            for socket in sockets.keys():
+                core_count = sockets[socket]['data']['Core Count']
+                # For socket but no chip installed
+                if core_count == "None":
+                    core_count = 0
+                if core_count is None:
+                    core_count = 0
+                cores.append(core_count)
+                total_core_num = total_core_num + core_count
+                print(
+                    INFO +
+                    LOCAL_HOSTNAME +
+                    " socket " +
+                    str(socket) +
+                    " has " +
+                    str(core_count) +
+                    " core[s]")
+            if total_core_num < 1:
+                print(
+                    ERROR +
+                    LOCAL_HOSTNAME +
+                    " has a total of " +
+                    str(total_core_num) +
+                    " core which cannot run ECE")
+                fatal_error = True
+            elif total_core_num < min_cores:
+                print(
+                    WARNING +
+                    LOCAL_HOSTNAME +
+                    " has a total of " +
+                    str(total_core_num) +
+                    " core[s] which is less than " +
+                    str(min_cores) +
+                    " cores required to run ECE")
+            else:
+                print(
+                    INFO +
+                    LOCAL_HOSTNAME +
+                    " has a total of " +
+                    str(total_core_num) +
+                    " cores which complies with the requirements to support ECE")
+        # virt_type == 'error' and virt_type == 'other' has been returned
+        elif virt_type == 'vmware':
+            num_sockets, total_core_num, cores = get_cpu_socket_core_num_by_lscpu()
+            if not cores:
+                fatal_error = True
+            if total_core_num < 1:
+                print("{0}{1} has a total of {2} virtual core which cannot run ECE".
+                    format(ERROR, LOCAL_HOSTNAME, total_core_num))
+                fatal_error = True
+            elif total_core_num < min_cores:
+                print("{0}{1} has a total of {2} virtual core[s] which is less ".
+                    format(WARNING, LOCAL_HOSTNAME, total_core_num) +
+                    "than {} cores required to run ECE".format(min_cores))
+            else:
+                print("{0}{1} has a total of {2} virtual cores which complies ".
+                    format(INFO, LOCAL_HOSTNAME, total_core_num) +
+                    "with the requirements to support ECE")
+
     return fatal_error, num_sockets, cores
 
 
@@ -729,82 +1256,102 @@ def check_memory(min_gb_ram):
     print(INFO + LOCAL_HOSTNAME + " checking memory")
     # Total memory
     if platform.processor() == 's390x':
-        meminfo = dict((i.split()[0].rstrip(':'),int(i.split()[1])) for i in open('/proc/meminfo').readlines())
+        meminfo = dict((i.split()[0].rstrip(':'),int(i.split()[1])) \
+            for i in open('/proc/meminfo').readlines())
         mem_kib = meminfo['MemTotal']  # e.g. 3921852
         mem_gb  = round(mem_kib / 1024 / 1024, 2)
     else:
-       mem_b = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
-       mem_gb = mem_b / 1024**3
+        mem_b = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+        mem_gb = mem_b / 1024**3
+        mem_gb = round(mem_gb, 2)
     if mem_gb < min_gb_ram:
-        print(
-            ERROR +
-            LOCAL_HOSTNAME +
-            " total memory is less than " +
-            str(min_gb_ram) +
-            " GB required to run ECE")
+        print("{0}{1} has a total of {2} GiB memory which is less than {3}".
+           format(ERROR, LOCAL_HOSTNAME, mem_gb, min_gb_ram) +
+           "GiB required to run ECE")
         fatal_error = True
     else:
-        print(
-            INFO +
-            LOCAL_HOSTNAME +
-            " total memory is " +
-            str(mem_gb) +
-            " GB, which is sufficient to run ECE")
+        print("{0}{1} has a total of {2} GiB memory which is sufficient ".
+            format(INFO, LOCAL_HOSTNAME, mem_gb) + "to run ECE")
     # Memory DIMMs
     if platform.processor() == 's390x':    # no dims on s390x
-        dimms = 0
-        num_dimms = 0
-        empty_dimms = 0
-        main_memory_size = 0
+        dimm_dict = {}
+        dimm_num = 0
+        empty_dimm_slot_count = 0
+        dedup_dimm_size_list = []
     else:
-        dimms = {}
-        m_slots = dmidecode.memory()
-        for slot in m_slots.keys():
-            # Avoiding 'System Board Or Motherboard'. Need more data
-            if m_slots[slot]['data']['Error Information Handle'] == 'Not Provided':
-                continue
-            try:
-                dimms[m_slots[slot]['data']['Locator']] = m_slots[slot]['data']['Size']
-            except BaseException:
-                continue
-        empty_dimms = 0
-        num_dimms = len(dimms)
-        dimm_size = {}
-        for dimm in dimms.keys():
-            if dimms[dimm] is None:
-                empty_dimms = empty_dimms + 1
-            elif dimms[dimm] == "NO DIMM":
-                empty_dimms = empty_dimms + 1
-            else:
-                dimm_size[dimm] = dimms[dimm]
-        if empty_dimms > 0:
-            print(
-                WARNING +
-                LOCAL_HOSTNAME +
-                " not all " +
-                str(num_dimms) +
-                " DIMM slot[s] are populated. This system has " +
-                str(empty_dimms) +
-                " empty DIMM slot[s]. This is not optimal if NVMe devices are used")
-        else:
-            print(INFO + LOCAL_HOSTNAME + " all " + str(num_dimms) +
-                  " DIMM slot[s] are populated. This is recommended when NVMe devices are used")
-        dimm_memory_size = []
-        for dimm in dimm_size.keys():
-            dimm_memory_size.append(dimm_size[dimm])
-        main_memory_size = unique_list(dimm_memory_size)
-        if len(main_memory_size) == 1:
-            print(
-                INFO +
-                LOCAL_HOSTNAME +
-                " all populated DIMM slots have same memory size")
-        else:
-            print(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " all populated DIMM slots do not have same memory sizes")
+        dimm_dict = {}
+        dimm_num = 0
+        empty_dimm_slot_count = 0
+        valid_dim_dict = {}
+        mem_slot_dict = dmidecode.memory()
+        if not mem_slot_dict:
+            print("{0}{1} got empty memory slot dictionary by dmidecode".
+                format(ERROR, LOCAL_HOSTNAME))
             fatal_error = True
-    return fatal_error, mem_gb, dimms, num_dimms, empty_dimms, main_memory_size
+        for val in mem_slot_dict.values():
+            # Avoiding 'System Board Or Motherboard'. Need more data
+            if val['data']['Error Information Handle'] == 'Not Provided':
+                continue
+
+            try:
+                locator = val['data']['Locator']
+                loc_size = val['data']['Size']
+            except KeyError as e:
+                logging.debug("Extract DIMM locator or size. Hit KeyError: %s", e)
+                continue
+
+            if isinstance(locator, bytes):
+                locator = locator.decode()
+            if isinstance(loc_size, bytes):
+                loc_size = loc_size.decode()
+            if not locator:
+                logging.debug("Got empty DIMM Locator from %s", val)
+                continue
+            if not loc_size:
+                logging.debug("Got empty DIMM size from %s", val)
+
+            dimm_dict[locator] = loc_size
+            if loc_size is None or 'NO DIMM' == loc_size:
+                empty_dimm_slot_count += 1
+            else:
+                valid_dim_dict[locator] = loc_size
+
+        dimm_num = len(dimm_dict)
+        populated_dimm_num = len(valid_dim_dict)
+        if dimm_num < 1:
+            print("{0}{1} generate empty DIMM dictionary from dmidecode".
+                format(ERROR, LOCAL_HOSTNAME))
+            fatal_error = True
+        else:
+            if empty_dimm_slot_count > 0:
+                print("{0}{1} has {2}({3} in total) DIMM slot[s] which ".
+                    format(WARNING, LOCAL_HOSTNAME, populated_dimm_num,
+                        dimm_num) +
+                    "is not optimal when NVMe drive was used")
+            else:
+                print("{0}{1} has a total of {2} DIMM slot[s] which ".
+                    format(INFO, LOCAL_HOSTNAME, dimm_num) +
+                "is fully populated")
+
+            dimm_size_list = valid_dim_dict.values()
+            try:
+                dedup_dimm_size_list = list(set(dimm_size_list))
+            except TypeError as e:
+                print("{0}{1} tried to deduplicate DIMM size but ".
+                    format(ERROR, LOCAL_HOSTNAME) +
+                    "hit TypeError: {}".format(e))
+                fatal_error = True
+
+            if len(dedup_dimm_size_list) == 1:
+                print("{0}{1} all populated DIMM slots have same size".
+                    format(INFO, LOCAL_HOSTNAME))
+            else:
+                print("{0}{1} not all populated DIMM slots have same size".
+                    format(ERROR, LOCAL_HOSTNAME))
+                fatal_error = True
+
+    return fatal_error, mem_gb, dimm_dict, dimm_num, empty_dimm_slot_count, \
+        dedup_dimm_size_list
 
 
 def unique_list(inputlist):
@@ -820,8 +1367,8 @@ def check_os_redhat(os_dictionary):
     fatal_error = False
     # Check redhat-release vs dictionary list
     try:
-      redhat_distribution = platform.linux_distribution()
-    except AttributeError as E:
+        redhat_distribution = platform.linux_distribution()
+    except AttributeError:
         import distro
         redhat_distribution = distro.linux_distribution()
 
@@ -861,10 +1408,9 @@ def check_os_redhat(os_dictionary):
                 " See Spectrum Scale FAQ for restrictions.")
         else:
             sys.exit(error_message)
-            fatal_error = True
+
     except BaseException:
         sys.exit(error_message)
-        fatal_error = True
 
     return fatal_error, redhat_distribution_str, redhat8
 
@@ -916,29 +1462,37 @@ def get_json_versions(
     return json_version
 
 
-def check_NVME():
+def get_nvme_drive_num():
+    """
+    Params:
+    Returns:
+        fatal_error - False if error occurred, else, True
+        nvme_drive_num - Number of NVMe drives
+    """
     fatal_error = False
-    print(INFO + LOCAL_HOSTNAME + " checking NVMe devices")
+    nvme_drive_num = 0
+    nvme_list = []
+    print("{0}{1} checking NVMe drive".format(INFO, LOCAL_HOSTNAME))
+
     try:
-        nvme_devices = os.listdir('/sys/class/nvme/')
-        num_nvme_devices = len(nvme_devices)
-        if num_nvme_devices == 0:
-            print(WARNING + LOCAL_HOSTNAME + " no NVMe devices detected")
-            fatal_error = True
-        else:
-            print(
-                INFO +
-                LOCAL_HOSTNAME +
-                " has " +
-                str(num_nvme_devices) +
-                " NVMe device[s] detected")
+        nvme_list = os.listdir('/sys/class/nvme/')
+    except BaseException as e:
+        print("{0}{1} tried to list /sys/class/nvme/. Hit exception: {2}".
+            format(WARNING, LOCAL_HOSTNAME, e))
 
-    except BaseException:
-        num_nvme_devices = 0
-        print(WARNING + LOCAL_HOSTNAME + " no NVMe devices detected")
+    if nvme_list:
+        nvme_drive_num = len(nvme_list)
+
+    if nvme_drive_num == 0:
+        print("{0}{1} does not have any NVMe drive".format(WARNING,
+            LOCAL_HOSTNAME))
         fatal_error = True
+    else:
+        print("{0}{1} has a total of {2} NVMe drive[s] but more checks ".
+            format(INFO, LOCAL_HOSTNAME, nvme_drive_num) +
+            "are required")
 
-    return fatal_error, num_nvme_devices
+    return fatal_error, nvme_drive_num
 
 
 def check_NVME_packages(packages_ch):
@@ -947,8 +1501,8 @@ def check_NVME_packages(packages_ch):
     if packages_ch:
         print(INFO +
         LOCAL_HOSTNAME +
-        " checking that needed software for NVMe is installed")
-        nvme_packages_errors = packages_check(nvme_packages)
+        " checking if software required by NVMe drive was installed")
+        nvme_packages_errors = package_check(nvme_packages)
         if nvme_packages_errors:
             fatal_error = True
     return fatal_error
@@ -960,8 +1514,8 @@ def check_SAS_packages(packages_ch):
     if packages_ch:
         print(INFO +
         LOCAL_HOSTNAME +
-        " checking that needed software for SAS is installed")
-        sas_packages_errors = packages_check(sas_packages)
+        " checking if software required by SAS was installed")
+        sas_packages_errors = package_check(sas_packages)
         if sas_packages_errors:
             fatal_error = True
     return fatal_error
@@ -1001,21 +1555,23 @@ def check_NVME_disks():
             print(
                 INFO +
                 LOCAL_HOSTNAME +
-                " all NVMe devices have the same size")
+                " all NVMe drives have the same size")
         else:
             print(
                 WARNING +
                 LOCAL_HOSTNAME +
-                " not all NVMe devices have the same size")
+                " not all NVMe drives have the same size")
     except BaseException:
         fatal_error = True
         print(
             WARNING +
             LOCAL_HOSTNAME +
-            " cannot query NVMe devices"
+            " cannot query NVMe drives"
             )
+
     return fatal_error, drives_dict
-    
+
+
 def check_NVME_log_home(drives_dict, size):
     log_home_found = False
     for drive in drives_dict.keys():
@@ -1061,20 +1617,19 @@ def check_NVME_ID(drives_dict):
 
         nvme_id_dict[drive] = [eui, nguid]
 
-    if fatal_error == False:
+    if fatal_error is False:
         if duplicates > 0:
             fatal_error = True
             print(
                 ERROR +
                 LOCAL_HOSTNAME +
-                " not all NVMe devices have unique IDs")
+                " not all NVMe drives have unique IDs")
         else:
             print(
                 INFO +
                 LOCAL_HOSTNAME +
-                " all NVMe devices have unique IDs")
+                " all NVMe drives have unique IDs")
     return fatal_error, nvme_id_dict
-
 
 
 def check_LBA_NVME(drives_dict):
@@ -1098,17 +1653,17 @@ def check_LBA_NVME(drives_dict):
                 )
         lba_size_list.append(lba_size)
     lba_unique_size = unique_list(lba_size_list)
-    if fatal_error == False:
+    if fatal_error is False:
         if len(lba_unique_size) == 1:
             print(
                 INFO +
                 LOCAL_HOSTNAME +
-                " all NVMe devices have the same LBA size")
+                " all NVMe drives have the same LBA size")
         else:
             print(
                 WARNING +
                 LOCAL_HOSTNAME +
-                " not all NVMe devices have the same LBA size")
+                " not all NVMe drives have the same LBA size")
     return fatal_error
 
 
@@ -1133,28 +1688,28 @@ def check_MD_NVME(drives_dict):
                 )
         md_size_list.append(md_size)
     md_unique_size = unique_list(md_size_list)
-    if fatal_error == False:
+    if fatal_error is False:
         if len(md_unique_size) == 1:
             print(
                 INFO +
                 LOCAL_HOSTNAME +
-                " all NVMe devices have the same metadata size")
+                " all NVMe drives have the same metadata size")
             if md_size == "0":
                 print(
                     INFO +
                     LOCAL_HOSTNAME +
-                    " all NVMe devices have metadata size of zero")
+                    " all NVMe drives have 0 metadata size")
             else:
                 fatal_error = True
                 print(
                     ERROR +
                     LOCAL_HOSTNAME +
-                    " not all NVMe devices have metadata size of zero")
+                    " not all NVMe drives have 0 metadata size")
         else:
             print(
                 WARNING +
                 LOCAL_HOSTNAME +
-                " not all NVMe devices have the same metadata size")
+                " not all NVMe drives have the same metadata size")
     return fatal_error
 
 
@@ -1190,8 +1745,8 @@ def tuned_adm_check():
     if grep_rc_tuned == 0: # throughput-performance profile is active
         print(INFO + LOCAL_HOSTNAME + " current active profile is spectrumscale-ece")
         # try: #Is it fully matching?
-        return_code = subprocess.call(['tuned-adm','verify'],stdout=DEVNULL, stderr=DEVNULL)
-    
+        return_code = subprocess.call(['tuned-adm','verify'], stdout=DEVNULL, stderr=DEVNULL)
+
         if return_code == 0:
             print(INFO + LOCAL_HOSTNAME + " tuned is matching the active profile")
         else:
@@ -1219,7 +1774,7 @@ def check_SAS(SAS_dictionary):
                 lspci_out = subprocess.Popen(['lspci'], stdout=subprocess.PIPE)
                 grep_proc = subprocess.Popen(['grep', 'SAS'], stdin=lspci_out.stdout, stdout=subprocess.PIPE)
                 grep_out_lspci, err = grep_proc.communicate()
-                if err != None:
+                if err is not None:
                     # We hit something unexpected
                     fatal_error = True
                 SAS_p='\\b'+SAS+'\\b'
@@ -1231,12 +1786,12 @@ def check_SAS(SAS_dictionary):
                     SAS_var_is_OK = False
                     grep_rc_lspci = 1
                 if grep_rc_lspci == 0:  # We have this SAS, 1 or more
-                    if SAS_dictionary[SAS] == "OK":                       
+                    if SAS_dictionary[SAS] == "OK":
                         if SAS_var_is_OK:
                             SAS_model.append(this_SAS)
                             storcli_err = check_storcli()
                             sas_speed_err = check_SAS_speed()
-                            if (storcli_err and sas_speed_err) == False:
+                            if (storcli_err and sas_speed_err) is False:
                                 found_SAS = True
                                 check_disks = True
                                 print(
@@ -1340,7 +1895,7 @@ def check_SAS(SAS_dictionary):
             lspci_out = subprocess.Popen(['lspci'], stdout=subprocess.PIPE)
             grep_proc = subprocess.Popen(['egrep', 'SAS|MegaRAID'], stdin=lspci_out.stdout, stdout=subprocess.PIPE)
             grep_out_lspci, err = grep_proc.communicate()
-            if err != None:
+            if err is not None:
                 # We hit something unexpected
                 fatal_error = True
             if grep_proc.returncode == 0: # We have some SAS
@@ -1352,7 +1907,7 @@ def check_SAS(SAS_dictionary):
                 SAS_model.append("NOT TESTED")
                 storcli_works = check_storcli()
                 sas_dev_int = check_SAS_speed()
-                if (storcli_works and sas_dev_int) == False:
+                if (storcli_works and sas_dev_int) is False:
                     found_SAS = True
                     check_disks = True
                 if storcli_works:
@@ -1371,20 +1926,162 @@ def check_SAS(SAS_dictionary):
                         LOCAL_HOSTNAME +
                         " SAS adapater fabric speed failed check. " +
                         "Please run storage tool from " +
-                        STORAGE_TOOL
-                    ) 
+                        STORAGE_TOOL)
             else:
                 print(
                     INFO +
                     LOCAL_HOSTNAME +
                     " does not have any SAS adapter.")
         except BaseException:
-                sys.exit(
-                    ERROR +
-                    LOCAL_HOSTNAME +
-                    " an undetermined error ocurred while " +
-                    "determing SAS adapters")
+            sys.exit(
+                ERROR +
+                LOCAL_HOSTNAME +
+                " an undetermined error ocurred while " +
+                "determing SAS adapters")
     return fatal_error, check_disks, SAS_model
+
+
+def check_vmware_scsi_controller(supported_sas_ctrl_dict):
+    """
+    Params:
+        supported_sas_ctrl_dict - SAS controller supported in SAS_adapters.json
+    Returns:
+        Directly exits if hit fatal error
+        scsi_ctrl_dict - {'PCI address': 'SCSI controller', ...}
+            Populated SCSI controller which is in supported_sas_ctrl_dict
+    """
+    if supported_sas_ctrl_dict and isinstance(supported_sas_ctrl_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter supported_sas_ctrl_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, supported_sas_ctrl_dict))
+
+    print("{0}{1} checking SCSI controller".format(INFO, LOCAL_HOSTNAME))
+    # Initialize scsi_ctrl_dict
+    scsi_ctrl_dict = {}
+    cmd = 'lspci'
+    cmd_out, err, _ = run_shell_cmd(cmd)
+    cmd_out = cmd_out.strip()
+    err = err.strip()
+    if err:
+        print("{0}{1} queried SCSI conftroller by running cmd: {2}. ".
+            format(WARNING, LOCAL_HOSTNAME, cmd) +
+            "Hit error: {}".format(err))
+        return scsi_ctrl_dict
+    if not cmd_out:
+        print("{0}{1} got nothing by running cmd: {2}".format(INFO,
+            LOCAL_HOSTNAME, cmd))
+        print("{0}{1} does not have any SCSI conftroller at all".
+            format(INFO, LOCAL_HOSTNAME))
+        return scsi_ctrl_dict
+
+    lspci_out_list = cmd_out.splitlines()
+    # Get alternative SCSI controllers
+    alt_scsi_ctrl_list = []
+    for line in lspci_out_list:
+        #if 'SATA controller' not in line and \
+        if 'SCSI storage controller' not in line and \
+           'SCSI controller' not in line and \
+           'SAS' not in line and \
+           'MegaRAID' not in line:
+            continue
+        try:
+            pci_addr = line.split(' ', 1)[0]
+            scsi_ctrl = line.split(':')[-1]
+            alt_scsi_ctrl_list.append("{0} {1}".format(pci_addr, scsi_ctrl))
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract SCSI controller from {2}. ".
+                format(ERROR, LOCAL_HOSTNAME, line) + "Hit exception: {}".
+                format(e))
+    logging.debug("Got alt_scsi_ctrl_list=%s", alt_scsi_ctrl_list)
+
+    if not alt_scsi_ctrl_list:
+        print("{0}{1} cannot get any SCSI controller from output of cmd: {2}".
+            format(INFO, LOCAL_HOSTNAME, cmd))
+        return scsi_ctrl_dict
+
+    marked_ok_scsi_ctrl_list = []
+    marked_ok_name_list = []
+    for alt_scsi_ctrl in alt_scsi_ctrl_list:
+        for key in supported_sas_ctrl_dict.keys():
+            if key == 'json_version':
+                continue
+            try:
+                scsi_ctrl_name = alt_scsi_ctrl.split(' ', 1)[-1]
+            except BaseException as e:
+                sys.exit("{0}{1} tried to extract SCSI controller name from ".
+                    format(ERROR, LOCAL_HOSTNAME) + "{0}. Hit exception: {1}".
+                    format(alt_scsi_ctrl, e))
+            if key in scsi_ctrl_name:
+                if supported_sas_ctrl_dict[key] == 'OK':
+                    # Marked 'OK'
+                    marked_ok_scsi_ctrl_list.append(alt_scsi_ctrl)
+                    marked_ok_name_list.append(scsi_ctrl_name.strip())
+
+    logging.debug("Got marked_ok_scsi_ctrl_list=%s", marked_ok_scsi_ctrl_list)
+
+    alt_scsi_ctrl_count = len(alt_scsi_ctrl_list)
+    ok_count = len(marked_ok_scsi_ctrl_list)
+    if ok_count > alt_scsi_ctrl_count:
+        sys.exit("{0}{1} got invalid supported SCSI controller list: {2}. Over flow".
+            format(ERROR, LOCAL_HOSTNAME, marked_ok_scsi_ctrl_list))
+    elif ok_count <= 0:
+        print("{0}{1} cannot find any supported SCSI controller to run ECE".
+            format(INFO, LOCAL_HOSTNAME))
+        return scsi_ctrl_dict
+    else:
+        # 0 < ok_count <= alt_scsi_ctrl_count
+        print("{0}{1} has {2} tested by IBM".
+            format(INFO, LOCAL_HOSTNAME, ", ".join(marked_ok_name_list)))
+        print("{0}{1} disk attached to above SCSI controller could be ".
+            format(INFO, LOCAL_HOSTNAME) + "used by ECE")
+        for ok_scsi_ctrl in marked_ok_scsi_ctrl_list:
+            try:
+                scsi_ctrl_addr = ok_scsi_ctrl.split(' ', 1)[0].strip()
+                scsi_ctrl_name = ok_scsi_ctrl.split(' ', 1)[-1].strip()
+            except BaseException as e:
+                sys.exit("{0}{1} tried to extract SCSI controller info from {2}. ".
+                    format(ERROR, LOCAL_HOSTNAME, ok_scsi_ctrl) +
+                    "Hit exception: {}".format(e))
+            scsi_ctrl_dict[scsi_ctrl_addr] = scsi_ctrl_name
+        logging.debug("Got scsi_ctrl_dict=%s", scsi_ctrl_dict)
+
+        if ok_count == alt_scsi_ctrl_count:
+            # All SCSI controller are in support list
+            print("{0}{1} Please run storage acceptance tool at {2}".
+                format(INFO, LOCAL_HOSTNAME, STORAGE_TOOL))
+            return scsi_ctrl_dict
+
+        # ok_count < alt_scsi_ctrl_count
+        not_ok_count = alt_scsi_ctrl_count - ok_count
+        not_ok_scsi_ctrl_list = \
+            [i for i in alt_scsi_ctrl_list if i not in marked_ok_scsi_ctrl_list]
+        logging.debug("Got not_ok_scsi_ctrl_list=%s", not_ok_scsi_ctrl_list)
+        generated_not_ok_count = len(not_ok_scsi_ctrl_list)
+        if generated_not_ok_count != not_ok_count:
+            sys.exit("{0}{1} generated invalid unsupported SCSI controller list: {2}".
+                format(ERROR, LOCAL_HOSTNAME, not_ok_scsi_ctrl_list))
+
+        notok_name_list = []
+        for notok_scsi_ctrl in not_ok_scsi_ctrl_list:
+            # Re-set scsi_ctrl_name to ''
+            scsi_ctrl_name = ''
+            try:
+                scsi_ctrl_addr = notok_scsi_ctrl.split(' ', 1)[0].strip()
+                scsi_ctrl_name = notok_scsi_ctrl.split(' ', 1)[-1].strip()
+            except BaseException as e:
+                sys.exit("{0}{1} tried to extract NOT-OK SCSI controller address from ".
+                    format(ERROR, LOCAL_HOSTNAME) + "{0}. Hit exception: {1}".
+                    format(notok_scsi_ctrl, e))
+            scsi_ctrl_dict[scsi_ctrl_addr] = "{} [NOT TESTED]".format(scsi_ctrl_name)
+            notok_name_list.append(scsi_ctrl_name.strip())
+
+        print("{0}{1} has {2} NOT tested by IBM".
+            format(WARNING, LOCAL_HOSTNAME, ", ".join(notok_name_list)))
+        print("{0}{1} disk attached to above SCSI controller cannot be used by ECE".
+            format(WARNING, LOCAL_HOSTNAME))
+
+        return scsi_ctrl_dict
 
 
 def exec_cmd(command):
@@ -1412,7 +2109,7 @@ def check_storcli():
             sas_int = commands.getoutput(
                 SAS_TOOL + " show " +
                 "| grep Number | awk '{print$5}'")
-        
+
         if sas_int == '0':
             fatal_error = True
         else:
@@ -1434,7 +2131,7 @@ def check_SAS_speed():
             sas_speed = commands.getoutput(
                 SAS_TOOL + " /call show all" +
                 "| grep \"Device Interface\" | sort -u | awk '{print $4}'")
-        
+
         if  allowed_dev_int in sas_speed:
             fatal_error = False
             print(
@@ -1444,8 +2141,7 @@ def check_SAS_speed():
                 sas_speed +
                 " for its fabric. Please rememeber to run the Storage " +
                 "acceptance tool that can be found at " + 
-                STORAGE_TOOL
-            )
+                STORAGE_TOOL)
         else:
             # We just print a warning for now
             fatal_error = False
@@ -1456,11 +2152,11 @@ def check_SAS_speed():
                 sas_speed +
                 " for its fabric. Please rememeber to run the Storage " +
                 "acceptance tool that can be found at " + 
-                STORAGE_TOOL
-            )
+                STORAGE_TOOL)
     except BaseException:
         fatal_error = True
     return fatal_error
+
 
 def dpofua_check(sata_drive):
     # We are going to check DpoFua = 1
@@ -1468,12 +2164,12 @@ def dpofua_check(sata_drive):
         if PYTHON3:
             sg_modes_output = subprocess.getoutput(
                 '/bin/sg_modes ' +
-                sata_drive + 
+                sata_drive +
                 ' | grep DpoFua')
         else:
             sg_modes_output = commands.getoutput(
                 '/bin/sg_modes ' +
-                sata_drive + 
+                sata_drive +
                 ' | grep DpoFua')
         # We got a line like
         #   Mode data length=44, medium type=0x00, WP=0, DpoFua=0, longlba=0
@@ -1518,7 +2214,7 @@ def dpofua_check(sata_drive):
             str(sata_drive)
         )
         dpofua_check_passed = False
-    return dpofua_check_passed   
+    return dpofua_check_passed
 
 
 def sct_erc_check(sata_drive):
@@ -1527,12 +2223,12 @@ def sct_erc_check(sata_drive):
         if PYTHON3:
             smartctl_output = subprocess.getoutput(
                 '/sbin/smartctl -l scterc ' +
-                sata_drive + 
+                sata_drive +
                 ' | grep seconds')
         else:
             smartctl_output = commands.getoutput(
                 '/sbin/smartctl -l scterc ' +
-                sata_drive + 
+                sata_drive +
                 ' | grep seconds')
         # We got two lines like (or none if no support on drive for SCT)
         #  Read: 70 (7.0 seconds)
@@ -1553,7 +2249,7 @@ def sct_erc_check(sata_drive):
                         INFO +
                         LOCAL_HOSTNAME +
                         " SCT ERC read/write values on SATA drive " +
-                        str(sata_drive) + 
+                        str(sata_drive) +
                         " are set 10 seconds or less"
                     )
                     sct_erc_check_passed = True
@@ -1563,7 +2259,7 @@ def sct_erc_check(sata_drive):
                         ERROR +
                         LOCAL_HOSTNAME +
                         " SCT ERC read/write value on SATA drive " +
-                        str(sata_drive) + 
+                        str(sata_drive) +
                         " is set to more than 10 seconds"
                     )
                     sct_erc_check_passed = False
@@ -1593,7 +2289,7 @@ def sct_erc_check(sata_drive):
             str(sata_drive)
         )
         sct_erc_check_passed = False
-    return sct_erc_check_passed   
+    return sct_erc_check_passed
 
 
 def sata_checks(SATA_drives):
@@ -1601,12 +2297,12 @@ def sata_checks(SATA_drives):
     errors = 0
     for sata_drive in SATA_drives:
         dpofua_pass = dpofua_check(sata_drive)
-        if dpofua_pass == False:
+        if dpofua_pass is False:
             errors = errors + 1
         sct_erc_pass = sct_erc_check(sata_drive)
-        if sct_erc_pass == False:
+        if sct_erc_pass is False:
             errors = errors + 1
-        
+
     if errors == 0:
         all_sata_drives_pass = True
     else:
@@ -1778,7 +2474,690 @@ def check_SAS_disks(device_type, sata_on):
         fatal_error = True
 
     return fatal_error, number_of_drives, SAS_drives_dict
-    
+
+
+def map_scsi_addr_to_logical_name():
+    """
+    Params:
+    Returns:
+        Directly exits if hit fatal error
+        mapping_dict - {'SCSI address': 'logical name', ...}
+    """
+    cmd = "lshw -class storage -quiet"
+    cmd_out, err, _ = run_shell_cmd(cmd)
+    cmd_out = cmd_out.strip()
+    err = err.strip()
+    if err:
+        sys.exit("{0}{1} queried storage info by running cmd: {2}. ".
+            format(ERROR, LOCAL_HOSTNAME, cmd) +
+            "Hit error: {}".format(err))
+    if not cmd_out:
+        sys.exit("{0}{1} got nothing by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+
+    lshw_out_lines = cmd_out.splitlines()
+    mapping_dict = {}
+    scsi_key = ''
+    for line in lshw_out_lines:
+        line = line.strip()
+        # Refresh desc_str for each interation
+        logical_name = ''
+        if 'bus info' in line and 'pci@' in line:
+            try:
+                scsi_key = line.split('pci@')[-1].strip()
+            except BaseException as e:
+                print("{0}{1} tried to extract bus info from {2}. ".
+                    format(WARNING, LOCAL_HOSTNAME, line) +
+                    "Hit exception: {}".format(e))
+        if not scsi_key:
+            # Skip empty PCI address
+            continue
+        if 'logical name:' in line and 'nvme' not in line:
+            try:
+                logical_name = line.split('logical name:')[-1].strip()
+            except BaseException as e:
+                print("{0}{1} tried to extract logical name from {2}. ".
+                    format(WARNING, LOCAL_HOSTNAME, line) +
+                    "Hit exception: {}".format(e))
+
+        if not logical_name:
+            # Skip if failed to extract logical name
+            continue
+        mapping_dict[scsi_key] = logical_name
+
+    if not mapping_dict:
+        logging.debug("Generate empty pciAddr-logicalName dictionary")
+        logging.debug("For more info, run cmd: %s", cmd)
+
+    return mapping_dict
+
+
+def map_hctl_to_disktype():
+    """
+    Params:
+    Returns:
+        Directly exits if hit fatal error
+        mapping_dict - {'H:T:C:L': 'SCSI Disk', ...}
+    """
+    cmd = "lshw -class disk -quiet"
+    cmd_out, err, _ = run_shell_cmd(cmd)
+    cmd_out = cmd_out.strip()
+    err = err.strip()
+    if err:
+        sys.exit("{0}{1} queried disk info by running cmd: {2} ".
+            format(ERROR, LOCAL_HOSTNAME, cmd) +
+            "Hit error: {}".format(err))
+    if not cmd_out:
+        sys.exit("{0}{1} got nothing by running cmd: {2}".
+            format(ERROR, LOCAL_HOSTNAME, cmd))
+
+    lshw_out_lines = cmd_out.splitlines()
+    reversed_lshw_lines = list(reversed(lshw_out_lines))
+    mapping_dict = {}
+    hctl_key = ''
+    for line in reversed_lshw_lines:
+        line = line.strip()
+        # Refresh desc_str for each interation
+        desc_str = ''
+        if 'bus info' in line and 'scsi@' in line:
+            try:
+                hctl_key = line.split('scsi@')[-1].strip().replace('.', ':')
+            except BaseException as e:
+                print("{0}{1} tried to extract bus info from {2}. ".
+                    format(WARNING, LOCAL_HOSTNAME, line) +
+                    "Hit exception: {}".format(e))
+        if not hctl_key:
+            # Skip empty H:T:C:L
+            continue
+        if 'description:' in line and 'NVMe disk' not in line:
+            try:
+                desc_str = line.split('description:')[-1].strip()
+            except BaseException as e:
+                print("{0}{1} tried to extract description from {2}. ".
+                    format(WARNING, LOCAL_HOSTNAME, line) +
+                    "Hit exception: {}".format(e))
+
+        if not desc_str:
+            # Skip if failed to extract description
+            continue
+        mapping_dict[hctl_key] = desc_str
+
+    if not mapping_dict:
+        print("{0}{1} cannot get busInfo-description mapping of disk".
+            format(INFO, LOCAL_HOSTNAME))
+        logging.debug("Generates empty H:C:T:L-diskType dictionary")
+
+    return mapping_dict
+
+
+def check_disk_wce_by_sginfo(disk_dict):
+    """
+    Params:
+        disk_dict - Part of disk dictionary defined by this script
+    Returns:
+        Directly exits if hit fatal error
+        (error_count, disk_dict)
+        error_count - error count of WCE checking
+        disk_dict - update input dict and make it look like:
+        {
+            'hctl': [size_decimal, size_unit, log_sec, model, wwn,
+                    'mapping_success', kname, WCE_by_sginfo,
+                    'storcli_WCE_unknown'],
+            ...
+        }
+    """
+    if disk_dict and isinstance(disk_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter disk_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, disk_dict))
+
+    error_count = 0
+    # Set WCE gotten from storcli as storcli_WCE_unknown to simulate physical checking
+    storcli_wce = 'storcli_WCE_unknown'
+    for val in disk_dict.values():
+        # Re-set sginfo_wce as sg_WCE_unknown for each iteration
+        sginfo_wce = 'sg_WCE_unknown'
+        try:
+            kname = val[6]
+        except IndexError as e:
+            error_count += 1
+            val.append(sginfo_wce)
+            val.append(storcli_wce)
+            print("{0}{1} tried to extract disk kernel name from {2}. ".
+                format(ERROR, LOCAL_HOSTNAME, val) +
+                "Hit IndexError: {}".format(e))
+            continue
+        if not kname:
+            error_count += 1
+            val.append(sginfo_wce)
+            val.append(storcli_wce)
+            print("{0}{1} got empty disk kernel name from {2}".
+                format(ERROR, LOCAL_HOSTNAME, val))
+            continue
+
+        get_wce_cmd = "/usr/bin/sginfo -c {}".format(kname)
+        wce_cmd_out, err, _ = run_shell_cmd(get_wce_cmd, True)
+        wce_cmd_out = wce_cmd_out.strip()
+        err = err.strip()
+        if err:
+            error_count += 1
+            val.append(sginfo_wce)
+            val.append(storcli_wce)
+            print("{0}{1} queried WCE info by running cmd: {2}. ".
+                format(ERROR, LOCAL_HOSTNAME, get_wce_cmd) +
+                "Hit error: {}".format(err))
+            continue
+        if not wce_cmd_out:
+            error_count += 1
+            val.append(sginfo_wce)
+            val.append(storcli_wce)
+            print("{0}{1} got empty sg-WCE info by running cmd: {2}".
+                format(ERROR, LOCAL_HOSTNAME, get_wce_cmd))
+            continue
+
+        # SG drive: SCSI generic drive
+        if 'no corresponding sg device found' in wce_cmd_out:
+            error_count += 1
+            val.append(sginfo_wce)
+            val.append(storcli_wce)
+            print("{0}{1} has {2} which is not a SCSI generic device".
+                format(ERROR, LOCAL_HOSTNAME, kname))
+            continue
+
+        wce_out_lines = wce_cmd_out.splitlines()
+        for line in wce_out_lines:
+            if 'Write Cache Enabled' in line:
+                try:
+                    enable_flag = int(line.split()[-1])
+                except BaseException as e:
+                    error_count += 1
+                    print("{0}{1} tried to extract sg-WCE flag from {2}. ".
+                        format(WARNING, LOCAL_HOSTNAME, line) +
+                        "Hit exception: {}".format(e))
+                    break
+                if enable_flag == 1:
+                    error_count += 1
+                    sginfo_wce = 'sg_WCE_enabled'
+                    print("{0}{1} has {2} which is Write Cache Enabled. It".
+                        format(ERROR, LOCAL_HOSTNAME, kname) +
+                        " cannot be used by ECE")
+                    break
+                elif enable_flag == 0:
+                    sginfo_wce = 'sg_WCE_disabled'
+                    break
+                else:
+                    error_count += 1
+                    print("{0}{1} has {2} which Write Cache Enabled is {3}".
+                        format(WARNING, LOCAL_HOSTNAME, kname, line) +
+                        ". That is NOT a standard format")
+                logging.debug("%s has WCE info: %s", kname, line)
+
+        val.append(sginfo_wce)
+        val.append(storcli_wce)
+
+    return error_count, disk_dict
+
+
+def get_os_disk(lsblk_outlines):
+    """
+    Params:
+        lsblk_outlines - output of lsblk
+    Returns:
+        Directly exits if hit fatal error
+        os_disk_list - A list of disk which OS is installed
+    """
+    if lsblk_outlines and isinstance(lsblk_outlines, list):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter lsblk_outlines({2})".
+            format(ERROR, LOCAL_HOSTNAME, lsblk_outlines))
+
+    kname_regex = re.compile(r'KNAME=\"(.*?)\"')
+    mntpt_regex = re.compile(r'MOUNTPOINT=\"(.*?)\"')
+    os_disk_list = []
+    for line in lsblk_outlines:
+        try:
+            kname = "".join(kname_regex.findall(line))
+        except BaseException as e:
+            sys.exit("{0}{1} failed to extract kname from {2}. Hit exception {3}".
+                format(ERROR, LOCAL_HOSTNAME, line, e))
+        if kname:
+            kname = kname.strip()
+            kname = "".join([i for i in kname if not i.isdigit()])
+        else:
+            continue
+
+        try:
+            mountpoint = "".join(mntpt_regex.findall(line))
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract mount-point from {2} Hit exception {3}".
+                format(ERROR, LOCAL_HOSTNAME, line, e))
+        if mountpoint:
+            mountpoint = mountpoint.strip()
+            if 'boot' in mountpoint:
+                # Got disk on which OS was installed
+                os_disk_list.append(kname)
+
+    if os_disk_list:
+        dedup_os_disk_list = list(set(os_disk_list))
+        logging.debug("OS is installed on %s", dedup_os_disk_list)
+        return dedup_os_disk_list
+    else:
+        logging.debug("OS disk is not found")
+        return []
+
+
+def get_partitioned_disk(lsblk_outlines, os_disk_list):
+    """                          
+    Params:                      
+        lsblk_outlines - output of lsblk
+        os_disk_list - disk list which OS is installed
+    Returns:                     
+        Directly exits if hit fatal error
+        part_disk_list - A list of disk which is partitioned
+    """
+    if lsblk_outlines and isinstance(lsblk_outlines, list):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter lsblk_outlines({2})".
+            format(ERROR, LOCAL_HOSTNAME, lsblk_outlines))
+
+    kname_regex = re.compile(r'KNAME=\"(.*?)\"')
+    base_kname_list = []
+    for line in lsblk_outlines:
+        try:
+            kname = "".join(kname_regex.findall(line))
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract kname from {2}. Hit exception: {3}".
+                format(ERROR, LOCAL_HOSTNAME, line, e))
+        if kname:
+            kname = kname.strip()
+            kname = "".join([i for i in kname if not i.isdigit()])
+            if '/dev/nvme' not in kname and \
+               '/dev/dm' not in kname and \
+               '/dev/sr' not in kname and \
+               '/dev/loop' not in kname:
+                if os_disk_list and isinstance(os_disk_list, list):
+                    if kname not in os_disk_list:
+                        base_kname_list.append(kname)
+                else:
+                    base_kname_list.append(kname)
+
+    # {'/dev/sda': '1'} if /dev/sda has no partition
+    # {'/dev/sda': '3'} if /dev/sda has two partitions /dev/sda1, /dev/sda2
+    part_disk_dict = {}
+    if base_kname_list:
+        for kname in base_kname_list:
+            try:
+                part_disk_dict[kname] = part_disk_dict.get(kname, 0) + 1
+            except BaseException as e:
+                sys.exit("{0}{1} tried to calculate partition number of {2}. ".
+                    format(ERROR, LOCAL_HOSTNAME, kname) + "Hit exception: {}".
+                    format(e))
+
+    part_disk_list = []
+    if part_disk_dict:
+        for key, val in part_disk_dict.items():
+            if val > 1:
+                part_disk_list.append(key)
+                part_num = val - 1
+                print("{0}{1} has {2} with {3} partition[s] which cannot be used".
+                    format(WARNING, LOCAL_HOSTNAME, key, part_num) + " by ECE")
+                print("{0}{1} For more info, run cmd: lsblk -p |grep {2}".
+                    format(WARNING, LOCAL_HOSTNAME, key))
+
+    return part_disk_list
+
+
+def get_supported_scsi_id(scsi_ctrl_dict):
+    """
+    Params:
+        scsi_ctrl_dict - SCSI controller dictionary
+    Returns:
+        Directly exits if hit fatal error
+        supported_scsi_id_list - ['scsi0', 'scsi1', ...] 
+    """
+    if scsi_ctrl_dict and isinstance(scsi_ctrl_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter scsi_ctrl_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, scsi_ctrl_dict))
+
+    scsi_map_dict = map_scsi_addr_to_logical_name()
+    logging.debug("Called map_scsi_addr_to_logical_name, got scsi_map_dict=%s",
+        scsi_map_dict)
+    if not scsi_map_dict:
+        sys.exit("{0}{1} cannot map SCSI address and its logical name".
+            format(ERROR, LOCAL_HOSTNAME))
+
+    supported_scsi_id_list = []
+    for key in scsi_ctrl_dict.keys():
+        if 'json_version' in key:
+            continue
+        # Re-set colon_div_scsi_addr_len to 0 for each iteration
+        colon_div_scsi_addr_len = 0
+        try:
+            colon_div_scsi_addr_len = len(key.split(':'))
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract length of colon divided ".
+                format(ERROR, LOCAL_HOSTNAME) + "SCSI address. Hit " +
+                "exception: {}".format(e))
+        if colon_div_scsi_addr_len < 2 or colon_div_scsi_addr_len > 3:
+            sys.exit("{0}{1} invalid length of colon divided SCSI ".
+                format(ERROR, LOCAL_HOSTNAME) + "address {}".format(key))
+
+        scsi_addr = key
+        if colon_div_scsi_addr_len == 2:
+            # Update SCSI address to standard format
+            scsi_addr = "0000:{}".format(key)
+        try:
+            scsi_id = scsi_map_dict[scsi_addr]
+        except KeyError as e:
+            sys.exit("{0}{1} tried to extract SCSI ID. Hit exception: ".
+                format(ERROR, LOCAL_HOSTNAME) + "{}".format(e))
+
+        supported_scsi_id_list.append(scsi_id)
+
+    if not supported_scsi_id_list:
+        sys.exit("{0}{1} cannot generate supported SCSI ID list".
+            format(ERROR, LOCAL_HOSTNAME))
+
+    return supported_scsi_id_list
+
+
+def check_disk_by_lsblk(scsi_ctrl_dict):
+    """
+    Params:
+        scsi_ctrl_dict - {'PCI address': 'SCSI controller', ...}
+    Returns:
+        Directly exits if hit fatal error
+        (hdd_error_count, hdd_wce_error_count, sas_hdd_disk_dict, 
+         ssd_error_count, ssd_wce_error_count, sas_ssd_disk_dict,)
+        hdd_error_count - error count of SAS HDD disk checking
+        hdd_wce_error_count - error count of SAS HDD WCE checking
+        sas_hdd_disk_dict - {
+            'hctl':[size_decimal, size_unit, log_sec, model, wwn, 
+            'mapping_success', kname, sg_wce, storcli_wce],
+            ...
+        }
+        ssd_error_count - error count of SAS SSD disk checking
+        ssd_wce_error_count - error count of SAS SSD WCE checking
+        sas_ssd_disk_dict - {
+            'hctl':[size_decimal, size_unit, log_sec, model, wwn,
+            'mapping_success', kname, sg_wce, storcli_wce],
+            ...
+        }
+    Remarks:
+        Simulate physical checking
+    """
+    if scsi_ctrl_dict and isinstance(scsi_ctrl_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter scsi_ctrl_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, scsi_ctrl_dict))
+
+    print("{0}{1} checking disk".format(INFO, LOCAL_HOSTNAME))
+
+    hctl_map_dict = map_hctl_to_disktype()
+    logging.debug("Called map_hctl_to_disktype, got hctl_map_dict=%s",
+        hctl_map_dict)
+
+    if not hctl_map_dict:
+        print("{0}{1} does not have any disk attached to SCSI controller".
+            format(INFO, LOCAL_HOSTNAME))
+        return 0, 0, {}, 0, 0, {}
+
+    supported_scsi_id_list = get_supported_scsi_id(scsi_ctrl_dict)
+    logging.debug("Called get_supported_scsi_id, got " +
+        "supported_scsi_id_list=%s", supported_scsi_id_list)
+
+    # Some old Linux kernel versions did not support --json but --pairs
+    out_opt = 'hctl,size,log-sec,model,wwn,kname,mountpoint,rota,state'
+    cmd = "lsblk --path --output {} --pairs".format(out_opt)
+    cmd_out, err, _ = run_shell_cmd(cmd)
+    cmd_out = cmd_out.strip()
+    err = err.strip()
+    if err:
+        print("{0}{1} queried block device info by running cmd: {2}. ".
+            format(WARNING, LOCAL_HOSTNAME, cmd) +
+            "Hit error: {}".format(err))
+        return 1, 0, {}, 1, 0, {}
+    if not cmd_out:
+        print("{0}{1} cannot get block device info by running cmd: {2}".
+            format(INFO, LOCAL_HOSTNAME, cmd))
+        return 1, 0, {}, 1, 0, {}
+
+    lsblk_lines = cmd_out.splitlines()
+    os_disk_list = get_os_disk(lsblk_lines)
+    logging.debug("Called get_os_disk, got lsblk_lines=%s", lsblk_lines)
+    part_disk_list = get_partitioned_disk(lsblk_lines, os_disk_list)
+    logging.debug("Called get_partitioned_disk, got part_disk_list=%s",
+        part_disk_list)
+
+    # Compile regular expressions
+    hctl_regex  = re.compile(r'HCTL=\"(.*?)\"')
+    size_regex  = re.compile(r'SIZE=\"(.*?)\"')
+    lgsc_regex  = re.compile(r'LOG-SEC=\"(.*?)\"')
+    model_regex = re.compile(r'MODEL=\"(.*?)\"')
+    wwn_regex   = re.compile(r'WWN=\"(.*?)\"')
+    kname_regex = re.compile(r'KNAME=\"(.*?)\"')
+    mntpt_regex = re.compile(r'MOUNTPOINT=\"(.*?)\"')
+    rota_regex  = re.compile(r'ROTA=\"(.*?)\"')
+    state_regex = re.compile(r'STATE=\"(.*?)\"')
+
+    sas_hdd_disk_dict = {}
+    sas_ssd_disk_dict = {}
+    sata_hdd_disk_dict = {}
+    sata_ssd_disk_dict = {}
+    improperly_attached_disk_dict = {}
+    error_count = 0
+    for line in lsblk_lines:
+        try:
+            hctl = "".join(hctl_regex.findall(line))
+            size = "".join(size_regex.findall(line))
+            log_sec = "".join(lgsc_regex.findall(line))
+            model = "".join(model_regex.findall(line))
+            wwn = "".join(wwn_regex.findall(line))
+            kname = "".join(kname_regex.findall(line))
+            mountpoint = "".join(mntpt_regex.findall(line))
+            rota = "".join(rota_regex.findall(line))
+            state = "".join(state_regex.findall(line))
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract item[s] from {2}. Hit exception: {3}".
+                format(ERROR, LOCAL_HOSTNAME, line, e))
+
+        hctl = hctl.strip()
+        size = size.strip()
+        log_sec = log_sec.strip()
+        log_sec = "{}B".format(log_sec)
+        model = model.strip()
+        wwn = wwn.strip()
+        kname = kname.strip()
+        mountpoint = mountpoint.strip()
+        rota = rota.strip()
+        state = state.strip()
+
+        if not hctl:
+            # Skip if disk did not have H:T:C:L
+            continue
+        if not log_sec:
+            # Skip if disk did not have logical sector size
+            continue
+        if not model:
+            # Skip if disk did not have model
+            continue
+        if not wwn:
+            # Skip if disk did not have wwn
+            continue
+        if not kname:
+            # Skip if disk did not have kernel-name
+            continue
+        if not rota:
+            # Skip if disk did not have rotation info
+            continue
+
+        # Create decimal size and its unit to be compatible with physical checking
+        try:
+            size_decimal = size[0:-1]
+            size_raw_unit = size[-1]
+        except BaseException as e:
+            sys.exit("{0}{1} tried to generate decimal size and its unit from {2}.".
+                format(ERROR, LOCAL_HOSTNAME, size) + " Hit exception: {}".
+                format(e))
+        try:
+            size_float = float(size_decimal)
+        except ValueError as e:
+            sys.exit("{0}{1} tried to extract size of {2}. Hit ValueError: {3}".
+                format(ERROR, LOCAL_HOSTNAME, kname, e))
+        size_unit = ''
+        if size_raw_unit.isalpha():
+            size_unit = "{}iB".format(size_raw_unit)
+        if not (size_float and size_unit):
+            error_count += 1
+            print("{0}{1} generated bad size info from {2}".format(ERROR,
+                LOCAL_HOSTNAME, size))
+            continue
+
+        try:
+            rota = int(rota)
+        except ValueError as e:
+            sys.exit("{0}{1} tried to extract integer rotation info from {2}. ".
+                format(ERROR, LOCAL_HOSTNAME, rota) + "Hit ValueError: {}".
+                format(e))
+
+        if state not in ('running', 'live'):
+            error_count += 1
+            state_cmd = 'lsblk -p -o kname,state'
+            print("{0}{1} has {2} which is not active. State is {3}".
+                  format(ERROR, LOCAL_HOSTNAME, kname, state))
+            logging.debug("Check state of %s by running cmd: %s",
+                kname, state_cmd)
+            continue
+
+        # Check if disk was OS installed
+        if kname in os_disk_list:
+            continue
+
+        # Check if disk was attached to incorrect SCSI controller
+        try:
+            curr_scsi_id = hctl.split(':', 1)[0]
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract SCSI ID from {2}. Hit exception: {3}".
+                format(ERROR, LOCAL_HOSTNAME, hctl, e))
+        curr_scsi_id = "scsi{}".format(curr_scsi_id)
+        if curr_scsi_id not in supported_scsi_id_list:
+            error_count += 1
+            try:
+                _ = improperly_attached_disk_dict[curr_scsi_id]
+            except KeyError:
+                improperly_attached_disk_dict[curr_scsi_id] = []
+            improperly_attached_disk_dict[curr_scsi_id].append(kname)
+            lshw_cmd = "lshw -c disk -quiet |grep '{}' -B1".format(kname)
+            logging.debug("Check attached SCSI ID of %s by running cmd: %s",
+                kname, lshw_cmd)
+            continue
+
+        # Check if disk was partitioned
+        if kname in part_disk_list:
+            error_count += 1
+            continue
+
+        # Check if disk was mounted
+        if mountpoint:
+            error_count += 1
+            print("{0}{1} has {2} mounted to {3} which cannot be used by ECE".
+                format(WARNING, LOCAL_HOSTNAME, kname, mountpoint))
+            continue
+
+        curr_disktype = ''
+        try:
+            curr_disktype = hctl_map_dict[hctl]
+        except KeyError as e:
+            error_count += 1
+            print("{0}{1} tried to extract disk type of {2} with {3}. Hit ".
+                format(ERROR, LOCAL_HOSTNAME, kname, hctl) + "KeyError: {}".
+                format(e))
+
+        if curr_disktype == 'SCSI Disk' and rota == 1:
+            sas_hdd_disk_dict[hctl] = \
+                [size_decimal, size_unit, log_sec, model, wwn, 'mapping_success', kname]
+        elif curr_disktype == 'SCSI Disk' and rota == 0:
+            sas_ssd_disk_dict[hctl] = \
+                [size_decimal, size_unit, log_sec, model, wwn, 'mapping_success', kname]
+        elif curr_disktype == 'ATA Disk' and rota == 1:
+            sata_hdd_disk_dict[hctl] = \
+                [size_decimal, size_unit, log_sec, model, wwn, 'mapping_success', kname]
+        elif curr_disktype == 'ATA Disk' and rota == 0:
+            sata_ssd_disk_dict[hctl] = \
+                [size_decimal, size_unit, log_sec, model, wwn, 'mapping_success', kname]
+
+    if improperly_attached_disk_dict:
+        for key, val in improperly_attached_disk_dict.items():
+            print("{0}{1} has {2} attached to unsupported SCSI controller with ".
+                format(WARNING, LOCAL_HOSTNAME, ", ".join(val)) +
+                "SCSI-ID: {}".format(key))
+
+    hdd_error_count = error_count
+    ssd_error_count = error_count
+    if sata_hdd_disk_dict:
+        hdd_error_count += 1
+        sata_hdd_disk_list = []
+        for val in sata_hdd_disk_dict.values():
+            sata_hdd_disk_list.append(val[6])
+        print("{0}{1} has SATA HDD {2} that cannot be used to run ECE".
+            format(WARNING, LOCAL_HOSTNAME, ", ".join(sata_hdd_disk_list)))
+        logging.debug("%s has sata_hdd_disk_dict=%s", LOCAL_HOSTNAME,
+            sata_hdd_disk_dict)
+    if sata_ssd_disk_dict:
+        ssd_error_count += 1
+        sata_ssd_disk_list = []
+        for val in sata_ssd_disk_dict.values():
+            sata_ssd_disk_list.append(val[6])
+        print("{0}{1} has SATA SSD {2} that cannot be used to run ECE".
+            format(WARNING, LOCAL_HOSTNAME, ", ".join(sata_ssd_disk_list)))
+        logging.debug("%s has sata_ssd_disk_dict=%s", LOCAL_HOSTNAME,
+            sata_ssd_disk_dict)
+
+    hdd_wce_error_count = 0
+    if not sas_hdd_disk_dict:
+        hdd_error_count += 1
+        print("{0}{1} has no proper SAS HDD to run ECE".format(INFO, LOCAL_HOSTNAME))
+    else:
+        if hdd_error_count > 0:
+            sas_hdd_disk_list = []
+            for val in sas_hdd_disk_dict.values():
+                sas_hdd_disk_list.append(val[6])
+            print("{0}{1} has SAS HDD {2} that could be used by ECE".
+                format(INFO, LOCAL_HOSTNAME, ", ".join(sas_hdd_disk_list)))
+        hdd_wce_error_count, sas_hdd_disk_dict = \
+            check_disk_wce_by_sginfo(sas_hdd_disk_dict)
+        logging.debug("Called check_disk_wce_by_sginfo, got hdd_wce_error_count=%s," +
+            " sas_hdd_disk_dict=%s", hdd_wce_error_count, sas_hdd_disk_dict)
+
+    ssd_wce_error_count = 0
+    if not sas_ssd_disk_dict:
+        ssd_error_count += 1
+        print("{0}{1} has no proper SAS SSD to run ECE".format(INFO, LOCAL_HOSTNAME))
+    else:
+        if ssd_error_count > 0:
+            sas_ssd_disk_list = []
+            for val in sas_ssd_disk_dict.values():
+                sas_ssd_disk_list.append(val[6])
+            print("{0}{1} has SAS SSD {2} that could be used by ECE".
+                format(INFO, LOCAL_HOSTNAME, sas_ssd_disk_list))
+        ssd_wce_error_count, sas_ssd_disk_dict = \
+            check_disk_wce_by_sginfo(sas_ssd_disk_dict)
+        logging.debug("Called check_disk_wce_by_sginfo, got ssd_wce_error_count=%s," +
+            " sas_ssd_disk_dict=%s", ssd_wce_error_count, sas_ssd_disk_dict)
+
+    logging.debug("Got hdd_error_count=%s, ssd_error_count=%s", hdd_error_count,
+        ssd_error_count)
+
+    return hdd_error_count, hdd_wce_error_count, sas_hdd_disk_dict, \
+           ssd_error_count, ssd_wce_error_count, sas_ssd_disk_dict
+
+
 def check_SSD_loghome(SSD_dict, size):
     log_home_found = False
     print(SSD_dict)
@@ -1787,6 +3166,49 @@ def check_SSD_loghome(SSD_dict, size):
             log_home_found = True
             break
     return log_home_found
+
+
+def is_ssd_loghome_size_ok(ssd_dict, min_loghome_size):
+    """
+    Params:
+        ssd_dict - Disk dictionary defined by this script
+        min_loghome_size - MIN_LOGHOME_DRIVE_SIZE in HW_requirements.json
+    Returns:
+        Directly exits if hit fatal error
+        can_loghome_be_created - True if all SSDs met requirement, else, False
+    """
+    if ssd_dict and isinstance(ssd_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter ssd_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, ssd_dict))
+
+    if min_loghome_size and isinstance(min_loghome_size, int):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter min_loghome_size({2})".
+            format(ERROR, LOCAL_HOSTNAME, min_loghome_size))
+
+    can_loghome_be_created = False
+    for val in ssd_dict.values():
+        int_capacity = 0
+        capacity_unit = ''
+        try:
+            int_capacity = int(float(val[0]))
+            capacity_unit = val[1]
+        except BaseException as e:
+            sys.exit("{0}{1} tried to extract capacity or its unit from".
+                format(ERROR, LOCAL_HOSTNAME) +
+                " {0}. Hit exception: {1}".format(val, e))
+
+        cap_in_bytes = convert_to_bytes(int_capacity, capacity_unit)
+        logging.debug("Called convert_to_bytes, got cap_in_bytes=%s",
+            cap_in_bytes)
+        if cap_in_bytes >= min_loghome_size:
+            can_loghome_be_created = True
+            break
+
+    return can_loghome_be_created
 
 
 def check_WCE_NVME(NVME_dict):
@@ -1808,7 +3230,7 @@ def check_WCE_NVME(NVME_dict):
             sys.exit(
                 ERROR +
                 LOCAL_HOSTNAME +
-                " cannot read WCE status for NVMe devices")
+                " cannot read WCE status for NVMe drives")
 
         # if WCE is not supported on device then we expect nonzero rc
         if rc == 0:
@@ -1836,21 +3258,268 @@ def check_WCE_NVME(NVME_dict):
     return fatal_error, NVME_dict
 
 
+def check_vmware_storage(supported_sas_ctrl_dict,
+                         min_loghome_size,
+                         max_drives,
+                         check_package,
+                         sata_on=False):
+    """
+    Params:
+        supported_sas_ctrl_dict - SAS controller supported in SAS_adapters.json
+        min_loghome_size - MIN_LOGHOME_DRIVE_SIZE in HW_requirements.json
+        max_drives - MAX_DRIVES in HW_requirements.json
+        check_package - If True, check whether nvme-cli was installed or not
+        sata_on - False(default)|True(Not supported at present)
+    Returns:
+        Directly exits if hit fatal error
+        error_count - count of error
+        outputfile_segment_dict - segment of outputfile
+    Remarks:
+        Simulate physical checking
+    """
+    if supported_sas_ctrl_dict and isinstance(supported_sas_ctrl_dict, dict):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter supported_sas_ctrl_dict({2})".
+            format(ERROR, LOCAL_HOSTNAME, supported_sas_ctrl_dict))
+
+    if min_loghome_size and isinstance(min_loghome_size, int):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter min_loghome_size({2})".
+            format(ERROR, LOCAL_HOSTNAME, min_loghome_size))
+
+    if max_drives and isinstance(max_drives, int):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter max_drives({2})".
+            format(ERROR, LOCAL_HOSTNAME, max_drives))
+
+    if isinstance(check_package, bool):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter check_package({2})".
+            format(ERROR, LOCAL_HOSTNAME, check_package))
+
+    if isinstance(sata_on, bool):
+        pass
+    else:
+        sys.exit("{0}{1} invalid parameter sata_on({2})".
+            format(ERROR, LOCAL_HOSTNAME, sata_on))
+
+    if sata_on:
+        sys.exit("{0}{1} does not support SATA disk checking in VMWare ".
+            format(ERROR, LOCAL_HOSTNAME) + "environment at present")
+
+    outputfile_segment_dict = {}
+    scsi_ctrl_dict = check_vmware_scsi_controller(supported_sas_ctrl_dict)
+    logging.debug("Called check_vmware_scsi_controller, got scsi_ctrl_dict=%s",
+        scsi_ctrl_dict)
+
+    error_count = 0
+    HDD_n_of_drives = 0
+    SSD_n_of_drives = 0
+    n_NVME_drives = 0
+    valid_drive_count = 0
+    # SAS_fatal_error is from storcli checking.
+    # Directly set it to Fasle for VMWare
+    SAS_fatal_error = False
+    # HDD_fatal_error is not important at present because ECE can be setup
+    # on server with NVMe only or SSD only
+    HDD_fatal_error = False
+    SSD_fatal_error = False
+    SAS_but_no_usable_drives = False
+    SSD_log_home_found = False
+    outputfile_segment_dict['error_SAS_card'] = SAS_fatal_error
+    if SAS_fatal_error:
+        # No SAS_fatal_error in VMWare
+        outputfile_segment_dict['SAS_model'] = []
+    else:
+        SAS_model_list = []
+        ok_scsi_ctrl_dict = {}
+        for key, val in scsi_ctrl_dict.items():
+            SAS_model_list.append(val)
+            if 'NOT TESTED' not in val:
+                ok_scsi_ctrl_dict[key] = val
+
+        outputfile_segment_dict['SAS_model'] = SAS_model_list
+        logging.debug("Got SAS_model=%s", SAS_model_list)
+        logging.debug("Got ok_scsi_ctrl_dict=%s", ok_scsi_ctrl_dict)
+        if ok_scsi_ctrl_dict:
+            # It's unnecessary to check storcli package. Set False directly
+            outputfile_segment_dict['SAS_packages_errors'] = False
+            # Check if HDD is attached to correct SCSI controller
+            HDD_fatal_error_count, HDD_WCE_error_count, HDD_dict, \
+                SSD_fatal_error_count, SSD_WCE_error_count, SSD_dict = \
+                check_disk_by_lsblk(ok_scsi_ctrl_dict)
+            logging.debug("Called check_disk_by_lsblk, got HDD_fatal_error_count=%s" +
+                ", HDD_WCE_error_count=%s, HDD_dict=%s, SSD_fatal_error_count=%s, " +
+                "SSD_WCE_error_count=%s, SSD_dict=%s", HDD_fatal_error_count,
+                HDD_WCE_error_count, HDD_dict, SSD_fatal_error_count,
+                SSD_WCE_error_count, SSD_dict)
+
+            HDD_fatal_error = bool(HDD_fatal_error_count)
+            HDD_WCE_error = bool(HDD_WCE_error_count)
+            if HDD_WCE_error:
+                error_count += 1
+
+            HDD_n_of_drives = len(HDD_dict)
+            # Do not considered HDD_fatal_error at present
+            if not HDD_WCE_error:
+                valid_drive_count += HDD_n_of_drives
+                print("{0}{1} has a total of {2} SAS HDD[s] that could be used by ECE".
+                    format(INFO, LOCAL_HOSTNAME, HDD_n_of_drives))
+
+            outputfile_segment_dict['HDD_fatal_error'] = HDD_fatal_error
+            outputfile_segment_dict['HDD_n_of_drives'] = HDD_n_of_drives
+            outputfile_segment_dict['HDD_drives'] = HDD_dict
+            outputfile_segment_dict['HDD_WCE_error'] = HDD_WCE_error
+
+            SSD_fatal_error = bool(SSD_fatal_error_count)
+            SSD_WCE_error = bool(SSD_WCE_error_count)
+            if SSD_WCE_error:
+                error_count += 1
+
+            SSD_n_of_drives = len(SSD_dict)
+            if not (SSD_fatal_error or SSD_WCE_error):
+                print("{0}{1} has a total of {2} SAS SSD[s] but more checks required".
+                    format(INFO, LOCAL_HOSTNAME, SSD_n_of_drives))
+                if SSD_dict:
+                    SSD_log_home_found = \
+                        is_ssd_loghome_size_ok(SSD_dict, min_loghome_size)
+                    logging.debug("Called is_ssd_loghome_size_ok, got " +
+                        "SSD_log_home_found=%s", SSD_log_home_found)
+
+            outputfile_segment_dict['SSD_fatal_error'] = SSD_fatal_error
+            outputfile_segment_dict['SSD_n_of_drives'] = SSD_n_of_drives
+            outputfile_segment_dict['SSD_drives'] = SSD_dict
+            outputfile_segment_dict['SSD_WCE_error'] = SSD_WCE_error
+
+            if HDD_n_of_drives > 0 or SSD_n_of_drives > 0:
+                SAS_but_no_usable_drives = False
+            else:
+                SAS_but_no_usable_drives = True
+            outputfile_segment_dict['found_SAS_card_but_no_drives'] = \
+                SAS_but_no_usable_drives
+            logging.debug("Got found_SAS_card_but_no_drives=%s",
+                SAS_but_no_usable_drives)
+
+    NVME_error, n_NVME_drives = get_nvme_drive_num()
+    logging.debug("Called get_nvme_drive_num, got NVME_error=%s, n_NVME_drives=%s",
+        NVME_error, n_NVME_drives)
+
+    outputfile_segment_dict['NVME_fatal_error'] = NVME_error
+    outputfile_segment_dict['NVME_number_of_drives'] = n_NVME_drives
+    NVME_dict = {}
+    NVME_packages_errors = 0
+    if not NVME_error:
+        NVME_packages_errors = check_NVME_packages(check_package)
+        outputfile_segment_dict['NVME_packages_errors'] = NVME_packages_errors
+        logging.debug("Called check_NVME_packages, got NVME_packages_errors=%s",
+            NVME_packages_errors)
+
+    if NVME_packages_errors > 0:
+        sys.exit("{0}{1} nvme-cli package is NOT installed".format(ERROR,
+            LOCAL_HOSTNAME))
+    else:
+        NVME_error, NVME_dict = check_NVME_disks()
+        logging.debug("Called check_NVME_disks, got NVME_error=%s, NVME_dict=%s",
+            NVME_error, NVME_dict)
+
+    loghome_error = False
+    NVME_ID_dict = {}
+    if n_NVME_drives > 0:
+        NVME_WCE_error, NVME_dict = check_WCE_NVME(NVME_dict)
+        outputfile_segment_dict['NVME_WCE_error'] = NVME_WCE_error
+        logging.debug("Called check_WCE_NVME, got NVME_WCE_error=%s, " +
+            "NVME_dict=%s", NVME_WCE_error, NVME_dict)
+        if NVME_WCE_error:
+            error_count += 1
+
+        NVME_LBA_error = check_LBA_NVME(NVME_dict)
+        outputfile_segment_dict['NVME_LBA_error'] = NVME_LBA_error
+        logging.debug("Called check_LBA_NVME, got NVME_LBA_error=%s",
+            NVME_LBA_error)
+        if NVME_LBA_error:
+            error_count += 1
+
+        NVME_MD_error = check_MD_NVME(NVME_dict)
+        outputfile_segment_dict['NVME_MD_error'] = NVME_MD_error
+        logging.debug("Called check_MD_NVME, got NVME_MD_error=%s",
+            NVME_LBA_error)
+        if NVME_MD_error:
+            error_count += 1
+
+        NVME_DUPLICATE_ID_error, NVME_ID_dict = check_NVME_ID(NVME_dict)
+        outputfile_segment_dict['NVME_DUPLICATE_ID_error'] = \
+            NVME_DUPLICATE_ID_error
+        logging.debug("Called check_NVME_ID, got NVME_DUPLICATE_ID_error=%s" +
+            ", NVME_ID_dict=%s",
+            NVME_DUPLICATE_ID_error, NVME_ID_dict)
+        if NVME_DUPLICATE_ID_error:
+            error_count += 1
+
+        NVME_log_home_found = check_NVME_log_home(NVME_dict, min_loghome_size)
+        logging.debug("Called check_NVME_log_home, got NVME_log_home_found=%s",
+            NVME_log_home_found)
+
+        if NVME_log_home_found or SSD_log_home_found:
+            # All solid disk checks completed
+            valid_drive_count += n_NVME_drives
+            valid_drive_count += SSD_n_of_drives
+            loghome_error = False
+        else:
+            loghome_error = True
+
+    outputfile_segment_dict['NVME_drives'] = NVME_dict
+    outputfile_segment_dict['NVME_ID'] = NVME_ID_dict
+    outputfile_segment_dict['loghome_error'] = loghome_error
+    if loghome_error:
+        error_count += 1
+        print("{0}{1} does not have any NVMe drive whose capacity met minimum ".
+            format(ERROR, LOCAL_HOSTNAME) + "log home size({} Bytes) ".
+            format(min_loghome_size) + "requirement")
+
+    outputfile_segment_dict['ALL_number_of_drives'] = valid_drive_count
+    if SAS_but_no_usable_drives:
+        print("{0}{1} has supported SCSI controller[s] but no proper disk was ".
+            format(WARNING, LOCAL_HOSTNAME) + "attached to it[them]")
+
+    if SAS_fatal_error and NVME_error:
+        error_count += 1
+        print("{0}{1} has SCSI controller and NVMe drive issues".
+            format(ERROR, LOCAL_HOSTNAME))
+    if SSD_fatal_error and NVME_error:
+        error_count += 1
+        print("{0}{1} does not have any NVMe drive or SSD can be used by ECE. ".
+            format(ERROR, LOCAL_HOSTNAME) +
+            "At least one NVMe drive or SSD is required")
+    else:
+        if valid_drive_count > max_drives:
+            error_count += 1
+            print("{0}{1} has a total of {2} disks which exceeds the maximum".
+                format(ERROR, LOCAL_HOSTNAME, valid_drive_count) +
+                "({}) disks per node that ECE required".format(max_drives))
+        else:
+            print("{0}{1} has a total of {2} disk[s] that could be used by ECE".
+                format(INFO, LOCAL_HOSTNAME, valid_drive_count))
+
+    return error_count, outputfile_segment_dict
+
+
 def check_WCE_SAS(SAS_drives_dict):
     # Check WCE is enabled, if so print an ERROR + return fatal_error True
     fatal_error = False
     num_errors = 0
     for drive in SAS_drives_dict.keys():
         enc_slot_list = drive.split(':')
+        cmd = "{0} /call/e{1}/s{2} show all j".format(SAS_TOOL,
+            enc_slot_list[0], enc_slot_list[1])
         try:
             if PYTHON3:
-                storcli_output = subprocess.getoutput(
-                    SAS_TOOL + ' /call/e' +
-                    enc_slot_list[0] + '/s' + enc_slot_list[1] + ' show all j ')
+                storcli_output = subprocess.getoutput(cmd)
             else:
-                storcli_output = commands.getoutput(
-                    SAS_TOOL + ' /call/e' + enc_slot_list[0] +
-                    '/s' + enc_slot_list[1] + ' show all j ')
+                storcli_output = commands.getoutput(cmd)
             wwn = WWNPATT.search(storcli_output).group('wwn')
             sasaddr = SASPATT.search(storcli_output).group('sasaddr')
             if wwn == 'NA':
@@ -1858,21 +3527,18 @@ def check_WCE_SAS(SAS_drives_dict):
                 # digit later
                 wwn = sasaddr
         except BaseException as e:
-            sys.exit(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " cannot parse WWN for SAS devices")
+            sys.exit("{0}{1} cannot parse WWN for SAS devices by running cmd: {2}".
+                format(ERROR, LOCAL_HOSTNAME, cmd) +
+                " Hit exception: {}".format(e))
         SAS_drives_dict[drive].append(wwn.lower())
         map_error, os_device = map_WWN_to_OS_device(wwn.lower())
+        logging.debug("Called map_WWN_to_OS_device got map_error=%s, os_device=%s",
+            map_error, os_device)
         if map_error:  # We need to exit
-            sys.exit(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " cannot map drive from WWN " +
-                wwn +
-                " to its OS name. Please run 'rescan-scsi-bus.sh' " +
-                "in this node and try again"
-            ) 
+            sys.exit("{0}{1} cannot map WWN({2}) to disk-kernel-name(/dev/sd*). ".
+                format(ERROR, LOCAL_HOSTNAME, wwn.lower()) +
+                "Please run cmd: {} and check files in /dev/disk/by-id/ ".
+                format(cmd) + "for more info")
         SAS_drives_dict[drive].append(map_error)
         SAS_drives_dict[drive].append(os_device)
         wce_drive_enabled = False
@@ -1986,6 +3652,7 @@ def map_WWN_to_OS_device(drive_WWN):
         fatal_error = True
     return fatal_error, os_device
 
+
 def check_is_hipersocket_NIC(net_interface):
     is_hipersocket = False
     try:
@@ -1998,7 +3665,7 @@ def check_is_hipersocket_NIC(net_interface):
             # checking if Hipersockets interface is bonded
             bondedIfs = subprocess.getoutput(
             'ls -d /sys/class/net/'+net_interface+'/lower_* | awk -Flower_ {\'print $2\'} ')
-            # loop through bonded interfaces and check if any is of type Hipersockets 
+            # loop through bonded interfaces and check if any is of type Hipersockets
             for bondedIf in bondedIfs.split():
                 card_type = subprocess.getoutput(
                 '/usr/sbin/lsqeth ' + bondedIf + ' | grep card_type ' )
@@ -2006,29 +3673,30 @@ def check_is_hipersocket_NIC(net_interface):
                 if card_type[2] == 'HiperSockets':
                     is_hipersocket = True
                     break
-            
+
     except BaseException:
         sys.exit(
             ERROR +
             LOCAL_HOSTNAME +
             " NIC card_type Hipersockets  could not be determined ")
 
-    return is_hipersocket    
-    
+    return is_hipersocket
+
+
 def check_is_roce_NIC(net_interface):
     is_roce_NIC = False
     try:
         # get all RoCE interfaces
         roceInterfaces = subprocess.getoutput(
             '/usr/sbin/rdma link show -jp | grep netdev\\" | awk -F\\" {\'print " "$4" "\'} | tr \'\\n\' \' \' ')
-        # check if word net_interface is among roceInterfaces 
+        # check if word net_interface is among roceInterfaces
         if " "+net_interface+" " in roceInterfaces:
             is_roce_NIC = True
         else:
-            # checking if RoCE interface is bonded 
+            # checking if RoCE interface is bonded
             bondedIfs = subprocess.getoutput(
             'ls -d /sys/class/net/'+net_interface+'/lower_* | awk -Flower_ {\'print $2\'} ')
-            # loop through bonded interfaces and check if any is among roceInterfaces 
+            # loop through bonded interfaces and check if any is among roceInterfaces
             for bondedIf in bondedIfs.split():
                 if " "+bondedIf+" " in roceInterfaces:
                     is_roce_NIC = True
@@ -2064,11 +3732,9 @@ def check_NIC(NIC_dictionary,ip_address):
                 ip_address)
 
         if not fatal_error:
-
             try:
                 is_hipersocket_NIC = check_is_hipersocket_NIC(net_interface)
-                
-                if is_hipersocket_NIC: 
+                if is_hipersocket_NIC:
                     print(
                         INFO +
                         LOCAL_HOSTNAME +
@@ -2086,7 +3752,6 @@ def check_NIC(NIC_dictionary,ip_address):
 
             try:
                 is_roce_NIC = check_is_roce_NIC(net_interface)
-
                 if is_roce_NIC:
                     print(
                         INFO +
@@ -2112,8 +3777,6 @@ def check_NIC(NIC_dictionary,ip_address):
                     LOCAL_HOSTNAME +
                     " an undetermined error ocurred while " +
                     "determing if we run on RoCE")
-
-
 
     else:
         for NIC in NIC_dictionary:
@@ -2258,7 +3921,7 @@ def print_summary_standalone(
     else:
         print("\t\tSockets: " + str(num_sockets))
         print("\t\tCores per socket: " + str(core_count))
-        print("\t\tMemory: " + str(mem_gb) + " GBytes")
+        print("\t\tMemory: " + str(mem_gb) + " GiBytes")
         print("\t\tDIMM slots: " + str(num_dimms))
         print("\t\tDIMM slots in use: " + str(num_dimms - empty_dimms))
         print("\t\tSAS HBAs in use: " + ', '.join(SAS_model))
@@ -2283,30 +3946,22 @@ def print_summary_standalone(
         )
 
     if nfatal_errors > 0:
-        sys.exit(
-            ERROR +
-            LOCAL_HOSTNAME +
-            " system cannot run IBM Spectrum Scale Erasure Code Edition")
+        sys.exit("{0}{1} cannot run IBM Spectrum Scale Erasure Code Edition".
+            format(ERROR, LOCAL_HOSTNAME))
     elif all_checks_on:
-        print(
-            INFO +
-            LOCAL_HOSTNAME +
-            " system can run IBM Spectrum Scale Erasure Code Edition")
+        print("{0}{1} can run IBM Spectrum Scale Erasure Code Edition".
+            format(INFO, LOCAL_HOSTNAME))
         if sata_on:
             print(
                 WARNING +
                 LOCAL_HOSTNAME +
                 " SATA tests were performed, even this system gave a " +
                 "passed status SATA drives cannot be used on ECE. Besides of " +
-                "a non supported setup by IBM you might face data loss"
-            )
+                "a non supported setup by IBM you might face data loss")
     else:
-        print(
-            WARNING +
-            LOCAL_HOSTNAME +
-            " Although the tests run were passed some tests were skipped so " +
-            "this tool cannot assess if this system can run " +
-            "IBM Spectrum Scale Erasure Code Edition")
+        print("{0}{1} partly passed the checking. This tool cannot ".
+            format(WARNING, LOCAL_HOSTNAME) +
+            "claim the system could run ECE")
 
 
 def main():
@@ -2334,58 +3989,50 @@ def main():
     sata_on,
     toolkit_run,
     want_verbose) = parse_arguments()
-    
+
     date_for_log = str(start_time_date).replace(" ", "_")
     set_logger_up(
-        path, 
+        path,
         "mor_debug_" + date_for_log,
         want_verbose)
     logging.debug(
         "We are runnig on architecture:" +
         str(platform.processor())
     )
-    logging.debug(
-        "Going to check if all tests are enabled"
-    )
+    logging.debug("Going to check if all tests are enabled")
     if (cpu_check and md5_check and mem_check and os_check and packages_ch
             and storage_check and net_check):
         all_checks_on = True
-        logging.debug(
-            "All tests are enabled"
-        )
+        logging.debug("All tests are enabled")
     else:
         all_checks_on = False
-        logging.debug(
-            "Not all tests are enabled"
-        )
+        logging.debug("Not all tests are enabled")
 
     if sata_on:
-        logging.debug(
-           "SATA checks are enabled"
-        )
+        logging.debug("SATA checks are enabled")
         print(
             WARNING +
             LOCAL_HOSTNAME +
             " SATA checks are enabled. This is not to be used on any " +
-            "environent even if the checks are passed"
-        )
+            "environment even if the checks are passed")
     else:
-        logging.debug(
-            "SATA checks are not enabled"
-        )
+        logging.debug("SATA checks are not enabled")
+
+    # Check if input IP is a local IP
+    ip_dev_dict = map_ipv4_to_local_interface(ip_address)
+    logging.debug("Called map_ipv4_to_local_interface, got ip_dev_dict=%s",
+        ip_dev_dict)
+    if not ip_dev_dict[ip_address]:
+        sys.exit(1)
 
     # JSON loads and calculate and store MD5
-    logging.debug(
-        "Going to load the JSON files"
-    )
+    logging.debug("Going to load the JSON files")
     os_dictionary = load_json(path + "supported_OS.json")
     packages_dictionary = load_json(path + "packages.json")
     SAS_dictionary = load_json(path + "SAS_adapters.json")
     NIC_dictionary = load_json(path + "NIC_adapters.json")
     HW_dictionary = load_json(path + "HW_requirements.json")
-    logging.debug(
-        "JSON files loaded"
-    )
+    logging.debug("JSON files loaded")
     if fips_mode:
         logging.debug(
             "FIPS mode enabled"
@@ -2414,7 +4061,7 @@ def main():
             "All MD5 SUMs of JSON files calculated"
         )
     logging.debug(
-        "Going to write in dictionary calculated MD5 SUMs"    
+        "Going to write in dictionary calculated MD5 SUMs"
     )
     outputfile_dict['supported_OS_md5'] = supported_OS_md5
     outputfile_dict['packages_md5'] = packages_md5
@@ -2517,6 +4164,8 @@ def main():
     logging.debug(
         "Going to set HW requirements into variables"
     )
+
+    min_loghome_size = 0
     if platform.processor() == 's390x':
         min_socket = HW_dictionary['MIN_SOCKET_S390X']
         min_cores = HW_dictionary['MIN_CORES_S390X']
@@ -2563,33 +4212,21 @@ def main():
         min_gb_ram,
         max_drives,
         min_link_speed]
-    logging.debug(
-        "Parameters of this run written"
-    )
+    logging.debug("Parameters of this run written")
 
     # Check root
-    logging.debug(
-        "Going to check if we are root"
-    )
+    logging.debug("Going to check if we are root")
     check_root_user()
-    logging.debug(
-        "root check passed"
-    )
+    logging.debug("root check passed")
 
     # Check cpu
-    logging.debug(
-        "Starting CPU checks"
-    )
+    logging.debug("Starting CPU checks")
     current_processor = "NOT CHECKED"
     num_sockets = 0
     core_count = 0
     if cpu_check:
-        logging.debug(
-            "CPU check is enabled"
-        )
-        logging.debug(
-            "Going to call check_processor()"
-        )
+        logging.debug("CPU check is enabled")
+        logging.debug("Going to call check_processor()")
         fatal_error, current_processor = check_processor()
         logging.debug(
             "Got back from check_processor(). fatal_error=" +
@@ -2630,9 +4267,7 @@ def main():
 
     # Check linux_distribution
     redhat_distribution_str = "NOT CHECKED"
-    logging.debug(
-        "Going to check the RedHat Linux distribution"
-    )
+    logging.debug("Going to check the RedHat Linux distribution")
     # Need this part out of OS check in case it is disabled by user
     if PYTHON3:
         redhat_distribution = distro.linux_distribution()
@@ -2652,7 +4287,7 @@ def main():
         linux_distribution = check_distribution()
         logging.debug(
             "Got back from check and got Linux distribution " +
-            str(linux_distribution)    
+            str(linux_distribution)
         )
         outputfile_dict['linux_distribution'] = linux_distribution
         if linux_distribution in ["redhat", "centos"]:
@@ -2707,33 +4342,26 @@ def main():
     # Check packages
     if packages_ch:
         logging.debug(
-            "Going to check for required packages"    
+            "Going to check for required packages"
         )
-        packages_errors = packages_check(packages_dictionary)
+        packages_errors = package_check(packages_dictionary)
         if packages_errors > 0:
-            logging.debug(
-                "Got number of failed required packages " +
-                str(packages_errors)
-            )
-            sys.exit(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " has missing packages that need to be installed\n")
+            logging.debug("Got number of unexpected package status: %s",
+                packages_errors)
+            sys.exit("{0}{1} has {2} unexpected package installation ".
+                format(ERROR, LOCAL_HOSTNAME, packages_errors) +
+                "status[es]")
         else:
             logging.debug(
                 "Passed required packages check"
             )
             outputfile_dict['packages_checked'] = packages_dictionary
-    
+
     # Get node serial number
-    logging.debug(
-        "Going to get node serial number"
-    )
+    logging.debug("Going to get node serial number")
     fatal_error, system_serial = get_system_serial()
     if fatal_error:
-        logging.debug(
-            "We got an error from quering the system serial"
-        )
+        logging.debug("We got an error from quering the system serial")
     else:
         logging.debug(
             "Got node serial number " +
@@ -2751,9 +4379,7 @@ def main():
     num_dimms = 0
     empty_dimms = 0
     if mem_check:
-        logging.debug(
-            "Going to perform the memory checks"
-        )
+        logging.debug("Going to perform the memory checks")
         (fatal_error,
             mem_gb,
             dimms,
@@ -2783,521 +4409,540 @@ def main():
         if fatal_error:
             nfatal_errors = nfatal_errors + 1
 
-    # Set SAS_TOOL/SAS_TOOL_ALIAS
-    set_sas_tool()
-
-    # Check SAS SAS_adapters
-    n_mestor_drives = 0
-    n_HDD_drives = 0
-    n_SSD_drives = 0
-    n_NVME_drives = 0
-    SSD_log_home_pres = False
-    NVME_log_home_pres = False
-    HDD_error = False
-    SSD_error = False
-    NVME_error = False
-    SAS_but_no_usable_drives = False
-    NVME_dict = {}
-    NVME_ID_dict = {}
-    SAS_model = ""
-    
-    if storage_check:
-        logging.debug(
-            "Going to perform storage checks"
-        )
-        if platform.processor() == 's390x':   
-            logging.debug(
-              "doing NVMe checks on s390x"
-            )
-            NVME_error, n_NVME_drives = check_NVME()
-            logging.debug(
-                "Got back from check_NVME with NVME_error=" +
-                str(NVME_error) +
-                " and n_NVME_drives=" +
-                str(n_NVME_drives)
-            )
-            outputfile_dict['NVME_fatal_error'] = NVME_error
-            outputfile_dict['NVME_number_of_drives'] = n_NVME_drives
-            if not NVME_error:
-                logging.debug(
-                    "Going to check for NVMe packages"
-                )
-                NVME_packages_errors = check_NVME_packages(packages_ch)
-                logging.debug(
-                    "Got back from check_NVME_packages with NVME_packages_errors=" +
-                    str(NVME_packages_errors)
-                )
-                outputfile_dict['NVME_packages_errors'] = NVME_packages_errors
-                if NVME_packages_errors > 0:
-                    sys.exit(
-                        ERROR +
-                        LOCAL_HOSTNAME +
-                        " has missing packages needed to run this tool\n")
-                else:
-                    n_mestor_drives = n_mestor_drives + n_NVME_drives
-                    logging.debug(
-                        "We got " +
-                        str(n_NVME_drives) +
-                        " NVMe drives. Going to run NVMe checks"
-                    )
-                    NVME_error, NVME_dict = check_NVME_disks()
-                    logging.debug(
-                        "Got back from check_NVME_disks with NVME_error=" +
-                        str(NVME_error) +
-                        " and NVME_dict " +
-                        str(NVME_dict)
-                    )
-            if n_NVME_drives > 0:
-                logging.debug(
-                    "Going to check WCE on NVMe"
-                )
-                NVME_WCE_error, NVME_dict = check_WCE_NVME(NVME_dict)
-                outputfile_dict['NVME_WCE_error'] = NVME_WCE_error
-                if NVME_WCE_error:
-                    nfatal_errors = nfatal_errors + 1
-                # All LBA NVME the same check
-                logging.debug(
-                    "Going to check LBA on NVMe"
-                )
-                NVME_LBA_error = check_LBA_NVME(NVME_dict)
-                logging.debug(
-                    "Got back from check_LBA_NVME with NVME_LBA_error=" +
-                    str(NVME_LBA_error)
-                )
-                outputfile_dict['NVME_LBA_error'] = NVME_LBA_error
-                if NVME_LBA_error:
-                    nfatal_errors = nfatal_errors + 1
-                # Metadata NVME check
-                logging.debug(
-                    "Going to check MD on NVMe"
-                )
-                NVME_MD_error = check_MD_NVME(NVME_dict)
-                logging.debug(
-                    "Got back from check_MD_NVME with NVME_MD_error=" +
-                    str(NVME_MD_error)
-                )
-                outputfile_dict['NVME_MD_error'] = NVME_MD_error
-                if NVME_MD_error:
-                    nfatal_errors = nfatal_errors + 1
-            outputfile_dict['NVME_drives'] = NVME_dict
-
-            outputfile_dict['ALL_number_of_drives'] = n_mestor_drives
-            # Lets check what we can use here
-            if NVME_error:
-                logging.debug(
-                    "We found issues on SAS and NVMe checks"
-                )
-                print(
-                    ERROR +
-                    LOCAL_HOSTNAME +
-                    " has found issues with NVMe  " +
-                    "devices in this system")
-                nfatal_errors = nfatal_errors + 1
+    virt_type = detect_virtualization()
+    logging.debug("Called detect_virtualization, got virt_type=%s", virt_type)
+    if virt_type not in ('vmware', 'none'):
+        sys.exit(1)
+    if virt_type == 'vmware':
+        SAS_model = []
+        n_HDD_drives = 0
+        n_SSD_drives = 0
+        n_NVME_drives = 0
+        if storage_check:
+            error_count, outputfile_stor_dict = \
+                check_vmware_storage(SAS_dictionary, min_loghome_size,
+                    max_drives, packages_ch, sata_on)
+            logging.debug("Called check_vmware_storage, got error_count=%s, " +
+                "outputfile_stor_dict=%s", error_count, outputfile_stor_dict)
+            nfatal_errors += error_count
+            SAS_model = []
+            n_HDD_drives = 0
+            n_SSD_drives = 0
+            n_NVME_drives = 0
+            if outputfile_stor_dict:
+                for key, val in outputfile_stor_dict.items():
+                    outputfile_dict[key] = val
+                try:
+                    SAS_model = outputfile_stor_dict['SAS_model']
+                    n_HDD_drives = outputfile_stor_dict['HDD_n_of_drives']
+                    n_SSD_drives = outputfile_stor_dict['SSD_n_of_drives']
+                    n_NVME_drives = outputfile_stor_dict['NVME_number_of_drives']
+                except KeyError as e:
+                    logging.debug("Tried to extract SAS_model or n_HDD_drives or " +
+                                  "n_NVME_drives but hit KeyError: %s", e)
             else:
-                logging.debug(
-                    "We have at least one non-rotatioal device in this host"
-                )
-                print(
-                    INFO +
-                    LOCAL_HOSTNAME +
-                    " has at least one NVMe device that ECE can use. " +
-                    "This is required to run ECE")
-        else:
-            SAS_fatal_error, check_disks, SAS_model = check_SAS(SAS_dictionary)
-            logging.debug(
-                "Got back from check_SAS with SAS_fatal_error=" +
-                str(SAS_fatal_error) +
-                ", check_disks=" +
-                str(check_disks) +
-                " and SAS_model=" +
-                str(SAS_model)
-            )
-            outputfile_dict['error_SAS_card'] = SAS_fatal_error
-            outputfile_dict['SAS_model'] = SAS_model
-            if check_disks:
-                logging.debug(
-                    "We have disks to check, first we check the SAS packages"
-                )
-                SAS_packages_errors = check_SAS_packages(packages_ch)
-                logging.debug(
-                    "Got SAS_packages_errors=" +
-                    str(SAS_packages_errors)
-                )
-                outputfile_dict['SAS_packages_errors'] = SAS_packages_errors
-                if SAS_packages_errors > 0:
-                    logging.debug(
-                        ERROR +
-                        LOCAL_HOSTNAME +
-                        " has missing packages needed to run this tool\n"
-                    )
-                    sys.exit(
-                        ERROR +
-                        LOCAL_HOSTNAME +
-                        " has missing packages needed to run this tool\n")
-                else:
-                    logging.debug(
-                        "Going to gather more information to add to JSON file"
-                    )
-                    # Extra information to the JSON
-                    logging.debug(
-                        "Going to run " + SAS_TOOL + " /call show all j"
-                    )
-                    call_all = exec_cmd(
-                        SAS_TOOL + " /call show all j")
-                    logging.debug(call_all)
-                    outputfile_dict['storcli_call'] = json.loads(call_all)
-                    logging.debug(
-                        "Going to run " + SAS_TOOL + " /call/eall show all j"
-                    )
-                    call_eall_all = exec_cmd(
-                        SAS_TOOL + " /call/eall show all j")
-                    logging.debug(call_eall_all)
-                    outputfile_dict['storcli_call_eall'] = json.loads(call_eall_all)
-                    logging.debug(
-                        "Going to run " + SAS_TOOL + " /call/eall/sall show all j"
-                    )
-                    call_sall_all = exec_cmd(
-                        SAS_TOOL + " /call/eall/sall show all j")
-                    logging.debug(call_sall_all)
-                    outputfile_dict['storcli_call_sall_all'] = json.loads(call_sall_all)
-                    # Checks start
-                    logging.debug(
-                        "Going to start HDD tests"
-                    )
-                    HDD_error, n_HDD_drives, HDD_dict = check_SAS_disks("HDD", sata_on)
-                    logging.debug(
-                        "Got HDD_error=" +
-                        str(HDD_error) +
-                        ", and n_HDD_drives=" +
-                        str(n_HDD_drives) +
-                        ", HDD_dict" +
-                        str(HDD_dict)
-                    )
-                    outputfile_dict['HDD_fatal_error'] = HDD_error
-                    outputfile_dict['HDD_n_of_drives'] = n_HDD_drives
-                    outputfile_dict['HDD_drives'] = HDD_dict
-                    if n_HDD_drives > 0:
-                        logging.debug(
-                            "Going to check WCE on HDD"
-                        )
-                        HDD_WCE_error, HDD_dict = check_WCE_SAS(HDD_dict)
-                        logging.debug(
-                            "Got HDD_WCE_error=" +
-                            str(HDD_WCE_error)
-                        )
-                        outputfile_dict['HDD_WCE_error'] = HDD_WCE_error
-                        if HDD_WCE_error:
-                            nfatal_errors = nfatal_errors + 1
-                    logging.debug(
-                        "Going to start SDD tests"
-                    )
-                    SSD_error, n_SSD_drives, SSD_dict = check_SAS_disks("SSD", sata_on)
-                    logging.debug(
-                        "Got SSD_error=" +
-                        str(SSD_error) +
-                        ", and n_SSD_drives=" +
-                        str(n_SSD_drives) +
-                        ", SSD_dict" +
-                        str(SSD_dict)
-                    )
-                    outputfile_dict['SSD_fatal_error'] = SSD_error
-                    outputfile_dict['SSD_n_of_drives'] = n_SSD_drives
-                    outputfile_dict['SSD_drives'] = SSD_dict
-                    if n_SSD_drives > 0:
-                        logging.debug(
-                            "Going to check WCE on SSD"
-                        )
-                        SSD_WCE_error, SSD_dict = check_WCE_SAS(SSD_dict)
-                        logging.debug(
-                            "Got SSD_WCE_error=" +
-                            str(SSD_WCE_error)
-                        )
-                        outputfile_dict['SSD_WCE_error'] = SSD_WCE_error
-                        if SSD_WCE_error:
-                            nfatal_errors = nfatal_errors + 1
-                        logging.debug(
-                            "Going to check for SSD big enough for loghome"
-                        )
-                        SSD_log_home_pres = check_SSD_loghome(SSD_dict, min_loghome_size)
-                        
-                    if not HDD_error:
-                        n_mestor_drives = n_mestor_drives + n_HDD_drives
-                    if not SSD_error:
-                        n_mestor_drives = n_mestor_drives + n_SSD_drives
-                    logging.debug(
-                        "We got " +
-                        str(n_HDD_drives) +
-                        " HDD and " +
-                        str(n_SSD_drives) +
-                        " SSD drives that ECE can use"
-                    )
-                    if HDD_error and SSD_error:
-                        logging.debug(
-                            "We have a SAS card but no drives ECE can use under it"
-                        )
-                        SAS_but_no_usable_drives = True
-                        outputfile_dict['found_SAS_card_but_no_drives'] = True
-            # NVME checks
-            logging.debug(
-                "Going to start NVMe tests"
-            )
-            NVME_error, n_NVME_drives = check_NVME()
-            logging.debug(
-                "Got back from check_NVME with NVME_error=" +
-                str(NVME_error) +
-                " and n_NVME_drives=" +
-                str(n_NVME_drives)
-            )
-            outputfile_dict['NVME_fatal_error'] = NVME_error
-            outputfile_dict['NVME_number_of_drives'] = n_NVME_drives
-            if not NVME_error:
-                logging.debug(
-                    "Going to check for NVMe packages"
-                )
-                NVME_packages_errors = check_NVME_packages(packages_ch)
-                logging.debug(
-                    "Got back from check_NVME_packages with NVME_packages_errors=" +
-                    str(NVME_packages_errors)
-                )
-                outputfile_dict['NVME_packages_errors'] = NVME_packages_errors
-                if NVME_packages_errors > 0:
-                    sys.exit(
-                        ERROR +
-                        LOCAL_HOSTNAME +
-                        " has missing packages needed to run this tool\n")
-                else:
-                    n_mestor_drives = n_mestor_drives + n_NVME_drives
-                    logging.debug(
-                        "We got " +
-                        str(n_NVME_drives) +
-                        " NVMe drives. Going to run NVMe checks"
-                    )
-                    NVME_error, NVME_dict = check_NVME_disks()
-                    logging.debug(
-                        "Got back from check_NVME_disks with NVME_error=" +
-                        str(NVME_error) +
-                        " and NVME_dict " +
-                        str(NVME_dict)
-                    )
-            if n_NVME_drives > 0:
-                logging.debug(
-                    "Going to check WCE on NVMe"
-                )
-                NVME_WCE_error, NVME_dict = check_WCE_NVME(NVME_dict)
-                logging.debug(
-                    "Got back from check_WCE_NVME with NVME_WCE_error=" +
-                    str(NVME_WCE_error)
-                )
-                outputfile_dict['NVME_WCE_error'] = NVME_WCE_error
-                if NVME_WCE_error:
-                    nfatal_errors = nfatal_errors + 1
-                # All LBA NVME the same check
-                logging.debug(
-                    "Going to check LBA on NVMe"
-                )
-                NVME_LBA_error = check_LBA_NVME(NVME_dict)
-                logging.debug(
-                    "Got back from check_LBA_NVME with NVME_LBA_error=" +
-                    str(NVME_LBA_error)
-                )
-                outputfile_dict['NVME_LBA_error'] = NVME_LBA_error
-                if NVME_LBA_error:
-                    nfatal_errors = nfatal_errors + 1
-                # Metadata NVME check
-                logging.debug(
-                    "Going to check MD on NVMe"
-                )
-                NVME_MD_error = check_MD_NVME(NVME_dict)
-                logging.debug(
-                    "Got back from check_MD_NVME with NVME_MD_error=" +
-                    str(NVME_MD_error)
-                )
-                outputfile_dict['NVME_MD_error'] = NVME_MD_error
-                if NVME_MD_error:
-                    nfatal_errors = nfatal_errors + 1
-                                #check nguid and euid of nvmes drives for uniqueness
-                logging.debug(
-                    "Going to check NVMe ID uniqueness"
-                )
-                NVME_DUPLICATE_ID_error, NVME_ID_dict = check_NVME_ID(NVME_dict)
-                logging.debug(
-                    "Got back from check_NVME_ID with NVME_DUPLICATE_ID_error=" +
-                    str(NVME_DUPLICATE_ID_error) +
-                    " and NVME_ID_dict=" +
-                    str(NVME_ID_dict)
-                )
-                outputfile_dict['NVME_DUPLICATE_ID_error'] = NVME_DUPLICATE_ID_error
+                nfatal_errors += 1
+                print("{0}{1} cannot generate storage part of outputfile dict".
+                    format(ERROR, LOCAL_HOSTNAME))
+    else:
+        # Set SAS_TOOL/SAS_TOOL_ALIAS
+        set_sas_tool()
 
-                if NVME_DUPLICATE_ID_error:
-                    nfatal_errors = nfatal_errors + 1
-                    
-                logging.debug(
-                    "Going to check for NVMe big enough for loghome"
-                )
-                NVME_log_home_pres = check_NVME_log_home(NVME_dict, min_loghome_size)
-                
-            loghome_pres = NVME_log_home_pres or SSD_log_home_pres
-            if not loghome_pres:
-                print(
-                    ERROR + 
-                    LOCAL_HOSTNAME +
-                    " does not have NVMe or SSD drive with at least "
-                    + str(min_loghome_size) + " bytes of storage" )
-                nfatal_errors = nfatal_errors + 1
-            
-            outputfile_dict['NVME_drives'] = NVME_dict
-            outputfile_dict['NVME_ID'] = NVME_ID_dict
-            outputfile_dict['loghome_error'] = not loghome_pres
+        # Check SAS SAS_adapters
+        n_mestor_drives = 0
+        n_HDD_drives = 0
+        n_SSD_drives = 0
+        n_NVME_drives = 0
+        SSD_log_home_pres = False
+        NVME_log_home_pres = False
+        HDD_error = False
+        SSD_error = False
+        NVME_error = False
+        SAS_but_no_usable_drives = False
+        NVME_dict = {}
+        NVME_ID_dict = {}
+        SAS_model = ""
 
+        if storage_check:
             logging.debug(
-                "the number of drives ECE can use in this host is " +
-                str(n_mestor_drives)
+                "Going to perform storage checks"
             )
-            outputfile_dict['ALL_number_of_drives'] = n_mestor_drives
-            # Throw a warning if no drives
-            if SAS_but_no_usable_drives:
+            if platform.processor() == 's390x':
                 logging.debug(
-                    "We have a supported SAS card but no usable drives"
+                  "doing NVMe checks on s390x"
                 )
-                print(
-                    WARNING +
-                    LOCAL_HOSTNAME +
-                    " has a supported SAS adapter but no supported drives")
-            # Lets check what we can use here
-            if SAS_fatal_error and NVME_error:
+                NVME_error, n_NVME_drives = get_nvme_drive_num()
                 logging.debug(
-                    "We found issues on SAS and NVMe checks"
+                    "Got back from check_NVME with NVME_error=" +
+                    str(NVME_error) +
+                    " and n_NVME_drives=" +
+                    str(n_NVME_drives)
                 )
-                print(
-                    ERROR +
-                    LOCAL_HOSTNAME +
-                    " has found issues with SAS adapter and NVMe  " +
-                    "devices in this system")
-                nfatal_errors = nfatal_errors + 1
-            if SSD_error and NVME_error:
-                logging.debug(
-                    "There is no non-rotational device in this host"
-                )
-                print(
-                    ERROR +
-                    LOCAL_HOSTNAME +
-                    " has no SSD or NVMe device that ECE can use. At least " +
-                    "one device of those types is required to run ECE")
-                nfatal_errors = nfatal_errors + 1
-            else:
-                logging.debug(
-                    "We have at least one non-rotatioal device in this host"
-                )
-                print(
-                    INFO +
-                    LOCAL_HOSTNAME +
-                    " has at least one SSD or NVMe device that ECE can use. " +
-                    "This is required to run ECE")
-                if n_mestor_drives > max_drives:
+                outputfile_dict['NVME_fatal_error'] = NVME_error
+                outputfile_dict['NVME_number_of_drives'] = n_NVME_drives
+                if not NVME_error:
                     logging.debug(
-                        "This host has " +
-                        str(n_mestor_drives) +
-                        " drives which is more than the allowed max of " +
-                        str(max_drives) +
-                        " per host"
+                        "Going to check for NVMe packages"
                     )
+                    NVME_packages_errors = check_NVME_packages(packages_ch)
+                    logging.debug(
+                        "Got back from check_NVME_packages with NVME_packages_errors=" +
+                        str(NVME_packages_errors)
+                    )
+                    outputfile_dict['NVME_packages_errors'] = NVME_packages_errors
+                    if NVME_packages_errors > 0:
+                        sys.exit(
+                            ERROR +
+                            LOCAL_HOSTNAME +
+                            " has missing packages needed to run this tool\n")
+                    else:
+                        n_mestor_drives = n_mestor_drives + n_NVME_drives
+                        logging.debug(
+                            "We got " +
+                            str(n_NVME_drives) +
+                            " NVMe drives. Going to run NVMe checks"
+                        )
+                        NVME_error, NVME_dict = check_NVME_disks()
+                        logging.debug(
+                            "Got back from check_NVME_disks with NVME_error=" +
+                            str(NVME_error) +
+                            " and NVME_dict " +
+                            str(NVME_dict)
+                        )
+                if n_NVME_drives > 0:
+                    logging.debug("Going to check WCE on NVMe")
+                    NVME_WCE_error, NVME_dict = check_WCE_NVME(NVME_dict)
+                    outputfile_dict['NVME_WCE_error'] = NVME_WCE_error
+                    if NVME_WCE_error:
+                        nfatal_errors = nfatal_errors + 1
+                    # All LBA NVME the same check
+                    logging.debug("Going to check LBA on NVMe")
+                    NVME_LBA_error = check_LBA_NVME(NVME_dict)
+                    logging.debug(
+                        "Got back from check_LBA_NVME with NVME_LBA_error=" +
+                        str(NVME_LBA_error)
+                    )
+                    outputfile_dict['NVME_LBA_error'] = NVME_LBA_error
+                    if NVME_LBA_error:
+                        nfatal_errors = nfatal_errors + 1
+                    # Metadata NVME check
+                    logging.debug("Going to check MD on NVMe")
+                    NVME_MD_error = check_MD_NVME(NVME_dict)
+                    logging.debug(
+                        "Got back from check_MD_NVME with NVME_MD_error=" +
+                        str(NVME_MD_error)
+                    )
+                    outputfile_dict['NVME_MD_error'] = NVME_MD_error
+                    if NVME_MD_error:
+                        nfatal_errors = nfatal_errors + 1
+                outputfile_dict['NVME_drives'] = NVME_dict
+
+                outputfile_dict['ALL_number_of_drives'] = n_mestor_drives
+                # Lets check what we can use here
+                if NVME_error:
+                    logging.debug("We found issues on SAS and NVMe checks")
                     print(
                         ERROR +
                         LOCAL_HOSTNAME +
-                        " has more than " +
-                        str(max_drives) +
-                        " drives that ECE can use in one RG. " +
-                        "This is not supported by ECE")
+                        " has found issues with NVMe  " +
+                        "devices in this system")
                     nfatal_errors = nfatal_errors + 1
                 else:
+                    logging.debug(
+                        "We have at least one non-rotatioal device in this host"
+                    )
                     print(
                         INFO +
                         LOCAL_HOSTNAME +
-                        " has " +
-                        str(n_mestor_drives) +
-                        " drives that ECE can use")
+                        " has at least one NVMe device that ECE can use. " +
+                        "This is required to run ECE")
+            else:
+                SAS_fatal_error, check_disks, SAS_model = check_SAS(SAS_dictionary)
+                logging.debug(
+                    "Got back from check_SAS with SAS_fatal_error=" +
+                    str(SAS_fatal_error) +
+                    ", check_disks=" +
+                    str(check_disks) +
+                    " and SAS_model=" +
+                    str(SAS_model)
+                )
+                outputfile_dict['error_SAS_card'] = SAS_fatal_error
+                outputfile_dict['SAS_model'] = SAS_model
+                if check_disks:
+                    logging.debug(
+                        "We have disks to check, first we check the SAS packages")
+                    SAS_packages_errors = check_SAS_packages(packages_ch)
+                    logging.debug(
+                        "Got SAS_packages_errors=" +
+                        str(SAS_packages_errors)
+                    )
+                    outputfile_dict['SAS_packages_errors'] = SAS_packages_errors
+                    if SAS_packages_errors > 0:
+                        logging.debug(
+                            ERROR +
+                            LOCAL_HOSTNAME +
+                            " has missing packages needed to run this tool\n"
+                        )
+                        sys.exit(
+                            ERROR +
+                            LOCAL_HOSTNAME +
+                            " has missing packages needed to run this tool\n")
+                    else:
+                        logging.debug(
+                            "Going to gather more information to add to JSON file"
+                        )
+                        # Extra information to the JSON
+                        logging.debug(
+                            "Going to run " + SAS_TOOL + " /call show all j"
+                        )
+                        call_all = exec_cmd(
+                            SAS_TOOL + " /call show all j")
+                        logging.debug(call_all)
+                        outputfile_dict['storcli_call'] = json.loads(call_all)
+                        logging.debug(
+                            "Going to run " + SAS_TOOL + " /call/eall show all j"
+                        )
+                        call_eall_all = exec_cmd(
+                            SAS_TOOL + " /call/eall show all j")
+                        logging.debug(call_eall_all)
+                        outputfile_dict['storcli_call_eall'] = json.loads(call_eall_all)
+                        logging.debug(
+                            "Going to run " + SAS_TOOL + " /call/eall/sall show all j"
+                        )
+                        call_sall_all = exec_cmd(
+                            SAS_TOOL + " /call/eall/sall show all j")
+                        logging.debug(call_sall_all)
+                        outputfile_dict['storcli_call_sall_all'] = json.loads(call_sall_all)
+                        # Checks start
+                        logging.debug("Going to start HDD tests")
+                        HDD_error, n_HDD_drives, HDD_dict = check_SAS_disks("HDD", sata_on)
+                        logging.debug(
+                            "Got HDD_error=" +
+                            str(HDD_error) +
+                            ", and n_HDD_drives=" +
+                            str(n_HDD_drives) +
+                            ", HDD_dict" +
+                            str(HDD_dict)
+                        )
+                        outputfile_dict['HDD_fatal_error'] = HDD_error
+                        outputfile_dict['HDD_n_of_drives'] = n_HDD_drives
+                        outputfile_dict['HDD_drives'] = HDD_dict
+                        if n_HDD_drives > 0:
+                            logging.debug("Going to check WCE on HDD")
+                            HDD_WCE_error, HDD_dict = check_WCE_SAS(HDD_dict)
+                            logging.debug(
+                                "Got HDD_WCE_error=" +
+                                str(HDD_WCE_error)
+                            )
+                            outputfile_dict['HDD_WCE_error'] = HDD_WCE_error
+                            if HDD_WCE_error:
+                                nfatal_errors = nfatal_errors + 1
+                        logging.debug("Going to start SDD tests")
+                        SSD_error, n_SSD_drives, SSD_dict = check_SAS_disks("SSD", sata_on)
+                        logging.debug(
+                            "Got SSD_error=" +
+                            str(SSD_error) +
+                            ", and n_SSD_drives=" +
+                            str(n_SSD_drives) +
+                            ", SSD_dict" +
+                            str(SSD_dict)
+                        )
+                        outputfile_dict['SSD_fatal_error'] = SSD_error
+                        outputfile_dict['SSD_n_of_drives'] = n_SSD_drives
+                        outputfile_dict['SSD_drives'] = SSD_dict
+                        if n_SSD_drives > 0:
+                            logging.debug("Going to check WCE on SSD")
+                            SSD_WCE_error, SSD_dict = check_WCE_SAS(SSD_dict)
+                            logging.debug(
+                                "Got SSD_WCE_error=" +
+                                str(SSD_WCE_error)
+                            )
+                            outputfile_dict['SSD_WCE_error'] = SSD_WCE_error
+                            if SSD_WCE_error:
+                                nfatal_errors = nfatal_errors + 1
+                            logging.debug(
+                                "Going to check for SSD big enough for loghome"
+                            )
+                            SSD_log_home_pres = check_SSD_loghome(SSD_dict, min_loghome_size)
+
+                        if not HDD_error:
+                            n_mestor_drives = n_mestor_drives + n_HDD_drives
+                        if not SSD_error:
+                            n_mestor_drives = n_mestor_drives + n_SSD_drives
+                        logging.debug(
+                            "We got " +
+                            str(n_HDD_drives) +
+                            " HDD and " +
+                            str(n_SSD_drives) +
+                            " SSD drives that ECE can use"
+                        )
+                        if HDD_error and SSD_error:
+                            logging.debug(
+                                "We have a SAS card but no drives ECE can use under it"
+                            )
+                            SAS_but_no_usable_drives = True
+                            outputfile_dict['found_SAS_card_but_no_drives'] = True
+                # NVME checks
+                logging.debug("Going to start NVMe tests")
+                NVME_error, n_NVME_drives = get_nvme_drive_num()
+                logging.debug(
+                    "Got back from check_NVME with NVME_error=" +
+                    str(NVME_error) +
+                    " and n_NVME_drives=" +
+                    str(n_NVME_drives)
+                )
+                outputfile_dict['NVME_fatal_error'] = NVME_error
+                outputfile_dict['NVME_number_of_drives'] = n_NVME_drives
+                if not NVME_error:
+                    logging.debug("Going to check for NVMe packages")
+                    NVME_packages_errors = check_NVME_packages(packages_ch)
+                    logging.debug(
+                        "Got back from check_NVME_packages with NVME_packages_errors=" +
+                        str(NVME_packages_errors)
+                    )
+                    outputfile_dict['NVME_packages_errors'] = NVME_packages_errors
+                    if NVME_packages_errors > 0:
+                        sys.exit(
+                            ERROR +
+                            LOCAL_HOSTNAME +
+                            " has missing packages needed to run this tool\n")
+                    else:
+                        n_mestor_drives = n_mestor_drives + n_NVME_drives
+                        logging.debug(
+                            "We got " +
+                            str(n_NVME_drives) +
+                            " NVMe drives. Going to run NVMe checks"
+                        )
+                        NVME_error, NVME_dict = check_NVME_disks()
+                        logging.debug(
+                            "Got back from check_NVME_disks with NVME_error=" +
+                            str(NVME_error) +
+                            " and NVME_dict " +
+                            str(NVME_dict)
+                        )
+                if n_NVME_drives > 0:
+                    logging.debug("Going to check WCE on NVMe")
+                    NVME_WCE_error, NVME_dict = check_WCE_NVME(NVME_dict)
+                    logging.debug(
+                        "Got back from check_WCE_NVME with NVME_WCE_error=" +
+                        str(NVME_WCE_error)
+                    )
+                    outputfile_dict['NVME_WCE_error'] = NVME_WCE_error
+                    if NVME_WCE_error:
+                        nfatal_errors = nfatal_errors + 1
+                    # All LBA NVME the same check
+                    logging.debug("Going to check LBA on NVMe")
+                    NVME_LBA_error = check_LBA_NVME(NVME_dict)
+                    logging.debug(
+                        "Got back from check_LBA_NVME with NVME_LBA_error=" +
+                        str(NVME_LBA_error)
+                    )
+                    outputfile_dict['NVME_LBA_error'] = NVME_LBA_error
+                    if NVME_LBA_error:
+                        nfatal_errors = nfatal_errors + 1
+                    # Metadata NVME check
+                    logging.debug("Going to check MD on NVMe")
+                    NVME_MD_error = check_MD_NVME(NVME_dict)
+                    logging.debug(
+                        "Got back from check_MD_NVME with NVME_MD_error=" +
+                        str(NVME_MD_error)
+                    )
+                    outputfile_dict['NVME_MD_error'] = NVME_MD_error
+                    if NVME_MD_error:
+                        nfatal_errors = nfatal_errors + 1
+                    #check nguid and euid of nvmes drives for uniqueness
+                    logging.debug("Going to check NVMe ID uniqueness")
+                    NVME_DUPLICATE_ID_error, NVME_ID_dict = check_NVME_ID(NVME_dict)
+                    logging.debug(
+                        "Got back from check_NVME_ID with NVME_DUPLICATE_ID_error=" +
+                        str(NVME_DUPLICATE_ID_error) +
+                        " and NVME_ID_dict=" +
+                        str(NVME_ID_dict)
+                    )
+                    outputfile_dict['NVME_DUPLICATE_ID_error'] = NVME_DUPLICATE_ID_error
+
+                    if NVME_DUPLICATE_ID_error:
+                        nfatal_errors = nfatal_errors + 1
+
+                    logging.debug("Going to check for NVMe big enough for loghome")
+                    NVME_log_home_pres = check_NVME_log_home(NVME_dict, min_loghome_size)
+
+                loghome_pres = NVME_log_home_pres or SSD_log_home_pres
+                if not loghome_pres:
+                    print(
+                        ERROR +
+                        LOCAL_HOSTNAME +
+                        " does not have NVMe or SSD drive with at least "
+                        + str(min_loghome_size) + " bytes of storage" )
+                    nfatal_errors = nfatal_errors + 1
+
+                outputfile_dict['NVME_drives'] = NVME_dict
+                outputfile_dict['NVME_ID'] = NVME_ID_dict
+                outputfile_dict['loghome_error'] = not loghome_pres
+
+                logging.debug(
+                    "the number of drives ECE can use in this host is " +
+                    str(n_mestor_drives)
+                )
+                outputfile_dict['ALL_number_of_drives'] = n_mestor_drives
+                # Throw a warning if no drives
+                if SAS_but_no_usable_drives:
+                    logging.debug("We have a supported SAS card but no usable drives")
+                    print(
+                        WARNING +
+                        LOCAL_HOSTNAME +
+                        " has a supported SAS adapter but no supported drives")
+                # Lets check what we can use here
+                if SAS_fatal_error and NVME_error:
+                    logging.debug("We found issues on SAS and NVMe checks")
+                    print(
+                        ERROR +
+                        LOCAL_HOSTNAME +
+                        " has found issues with SAS adapter and NVMe  " +
+                        "devices in this system")
+                    nfatal_errors = nfatal_errors + 1
+                if SSD_error and NVME_error:
+                    logging.debug("There is no non-rotational device in this host")
+                    print(
+                        ERROR +
+                        LOCAL_HOSTNAME +
+                        " has no SSD or NVMe device that ECE can use. At least " +
+                        "one device of those types is required to run ECE")
+                    nfatal_errors = nfatal_errors + 1
+                else:
+                    logging.debug(
+                        "We have at least one non-rotatioal device in this host"
+                    )
+                    print(
+                        INFO +
+                        LOCAL_HOSTNAME +
+                        " has at least one SSD or NVMe device that ECE can use. " +
+                        "This is required to run ECE")
+                    if n_mestor_drives > max_drives:
+                        logging.debug(
+                            "This host has " +
+                            str(n_mestor_drives) +
+                            " drives which is more than the allowed max of " +
+                            str(max_drives) +
+                            " per host"
+                        )
+                        print(
+                            ERROR +
+                            LOCAL_HOSTNAME +
+                            " has more than " +
+                            str(max_drives) +
+                            " drives that ECE can use in one RG. " +
+                            "This is not supported by ECE")
+                        nfatal_errors = nfatal_errors + 1
+                    else:
+                        print(
+                            INFO +
+                            LOCAL_HOSTNAME +
+                            " has " +
+                            str(n_mestor_drives) +
+                            " drives that ECE can use")
 
     # Network checks
-    logging.debug(
-        "Going to start network checks on this host: " +
-        LOCAL_HOSTNAME
-    )
-    outputfile_dict['local_hostname'] = LOCAL_HOSTNAME
-    ip_address_is_IP = is_IP_address(ip_address)
-    logging.debug(
-        "The input IP address is possible?=" +
-        str(ip_address_is_IP)
-    )
-    outputfile_dict['IP_address_is_possible'] = ip_address_is_IP
-    outputfile_dict['ip_address'] = ip_address
-    NIC_model = ""
-    device_speed = "NOT CHECKED"
+    if virt_type == 'vmware':
+        outputfile_dict['local_hostname'] = LOCAL_HOSTNAME
+        outputfile_dict['IP_address_is_possible'] = True
+        outputfile_dict['ip_address'] = ip_address
+        NIC_model = []
+        device_speed = 'NOT CHECKED'
+        if net_check:
+            error_count, outputfile_nic_dict = \
+                check_vmware_nic(ip_dev_dict, net_check, NIC_dictionary,
+                    min_link_speed)
+            logging.debug("Called check_vmware_nic, got error_count=%s, " +
+                "outputfile_nic_dict=%s", error_count, outputfile_nic_dict)
+            nfatal_errors += error_count
+            if not outputfile_nic_dict:
+                nfatal_errors += 1
+                print("{0}{1} cannot generate network part of outputfile dict".
+                    format(ERROR, LOCAL_HOSTNAME))
+            else:
+                for key, val in outputfile_nic_dict.items():
+                    outputfile_dict[key] = val
+                try:
+                    NIC_model = outputfile_nic_dict['NIC_model']
+                    device_speed = outputfile_nic_dict['netdev_speed']
+                except KeyError as e:
+                    logging.debug("Tried to extract NIC_model or netdev_speed. " +
+                        "Hit KeyError: %s", e)
+    else:
+        logging.debug(
+            "Going to start network checks on this host: " +
+            LOCAL_HOSTNAME
+        )
+        outputfile_dict['local_hostname'] = LOCAL_HOSTNAME
+        ip_address_is_IP = is_IP_address(ip_address)
+        logging.debug(
+            "The input IP address is possible?=" +
+            str(ip_address_is_IP)
+        )
+        outputfile_dict['IP_address_is_possible'] = ip_address_is_IP
+        outputfile_dict['ip_address'] = ip_address
+        NIC_model = ""
+        device_speed = "NOT CHECKED"
 
-    if net_check:
-        logging.debug(
-            "Going to check NIC model"
-        )
-        fatal_error, NIC_model = check_NIC(NIC_dictionary,ip_address)
-        logging.debug(
-            "Got back from check_NIC with fatal_error=" +
-            str(fatal_error) +
-            " and NIC_model=" +
-            str(NIC_model)
-        )
-        outputfile_dict['error_NIC_card'] = fatal_error
-        outputfile_dict['NIC_model'] = NIC_model
-        if fatal_error:
-            nfatal_errors = nfatal_errors + 1
-        elif (ip_address_is_IP):
+        if net_check:
+            logging.debug("Going to check NIC model")
+            fatal_error, NIC_model = check_NIC(NIC_dictionary,ip_address)
             logging.debug(
-                "Going to check if IP corresponds to a device what its link speed"
-            )
-            print(
-                INFO +
-                LOCAL_HOSTNAME +
-                " checking " +
-                ip_address +
-                " device and link speed")
-            net_devices = list_net_devices()
-            outputfile_dict['ALL_net_devices'] = net_devices
-            fatal_error, net_interface = what_interface_has_ip(
-                net_devices, ip_address)
-            logging.debug(
-                "Got back from what_interface_has_ip with fatal_error=" +
+                "Got back from check_NIC with fatal_error=" +
                 str(fatal_error) +
-                " and net_interface=" +
-                str(net_interface)
-            )
-            outputfile_dict['IP_not_found'] = fatal_error
-            outputfile_dict['netdev_with_IP'] = net_interface
+                " and NIC_model=" +
+                str(NIC_model))
+            outputfile_dict['error_NIC_card'] = fatal_error
+            outputfile_dict['NIC_model'] = NIC_model
             if fatal_error:
                 nfatal_errors = nfatal_errors + 1
-            else:
-                # It is a valid IP and there is an interface on this node with
-                # this IP
-                fatal_error, device_speed = check_NIC_speed(
-                    net_interface, min_link_speed)
+            elif ip_address_is_IP:
                 logging.debug(
-                    "Got back from check_NIC_speed with fatal_error=" +
+                    "Going to check if IP corresponds to a device what its link speed")
+                print(
+                    INFO +
+                    LOCAL_HOSTNAME +
+                    " checking " +
+                    ip_address +
+                    " device and link speed")
+                net_devices = list_net_devices()
+                outputfile_dict['ALL_net_devices'] = net_devices
+                fatal_error, net_interface = what_interface_has_ip(
+                    net_devices, ip_address)
+                logging.debug(
+                    "Got back from what_interface_has_ip with fatal_error=" +
                     str(fatal_error) +
-                    " and link speed of " +
-                    str(device_speed)
-                )
-                outputfile_dict['netdev_speed_error'] = fatal_error
-                outputfile_dict['netdev_speed'] = device_speed
+                    " and net_interface=" +
+                    str(net_interface))
+                outputfile_dict['IP_not_found'] = fatal_error
+                outputfile_dict['netdev_with_IP'] = net_interface
                 if fatal_error:
                     nfatal_errors = nfatal_errors + 1
-        else:
-            logging.debug(
-                "The IP is not a valid one"
-            )
-            print(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " " +
-                ip_address +
-                " is not a valid IP address")
-            nfatal_errors = nfatal_errors + 1
+                else:
+                    # It is a valid IP and there is an interface on this node with
+                    # this IP
+                    fatal_error, device_speed = check_NIC_speed(
+                        net_interface, min_link_speed)
+                    logging.debug(
+                        "Got back from check_NIC_speed with fatal_error=" +
+                        str(fatal_error) +
+                        " and link speed of " +
+                        str(device_speed)
+                    )
+                    outputfile_dict['netdev_speed_error'] = fatal_error
+                    outputfile_dict['netdev_speed'] = device_speed
+                    if fatal_error:
+                        nfatal_errors = nfatal_errors + 1
+            else:
+                logging.debug("The IP is not a valid one")
+                print(
+                    ERROR +
+                    LOCAL_HOSTNAME +
+                    " " +
+                    ip_address +
+                    " is not a valid IP address")
+                nfatal_errors = nfatal_errors + 1
 
     # Check tuned
     if tuned_check:
@@ -3316,9 +4961,7 @@ def main():
             outputfile_dict['tuned_fail'] = False
 
     # Check py3 YAML
-    logging.debug(
-        "Going to check for py3_yaml"
-    )
+    logging.debug("Going to check for py3_yaml")
     fatal_error = check_py3_yaml()
     logging.debug(
         "Got back from check_py3_yaml with fatal_error=" +
@@ -3329,7 +4972,7 @@ def main():
         outputfile_dict['py3_yaml_fail'] = True
     else:
         outputfile_dict['py3_yaml_fail'] = False
-    
+
     # Set general status of acceptance of this node
     if nfatal_errors == 0 and all_checks_on:
         logging.debug(
@@ -3343,7 +4986,7 @@ def main():
         outputfile_dict['ECE_node_ready'] = False
 
     # Save lspci output to JSON
-    lspci_dict = dict()
+    lspci_dict = {}
     lspci_output = exec_cmd("lspci")
     if not PYTHON3:
         for line in lspci_output.splitlines():
@@ -3361,14 +5004,13 @@ def main():
 
     outputfile_dict['lspci'] = lspci_dict
 
-    # Exit protocol    
+    # Exit protocol
     DEVNULL.close()
 
     outputfile_name = path + ip_address + ".json"
     end_time_date = datetime.datetime.now()
     outputfile_dict['end_time'] = str(end_time_date)
-    outputdata = json.dumps(str(outputfile_dict), sort_keys=True, indent=4,
-                            separators=(',', ': '))
+    outputdata = json.dumps(outputfile_dict, indent=4)
     with open(outputfile_name, "w") as outputfile:
         outputfile.write(outputdata)
 
@@ -3399,4 +5041,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

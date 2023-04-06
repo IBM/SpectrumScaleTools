@@ -1,5 +1,5 @@
 {
-  "json_version": "1.6",
+  "json_version": "1.7",
   "MegaRAID SAS-3 3108": "OK",
   "MegaRAID SAS3516": "OK",
   "MegaRAID Tri-Mode SAS3516": "OK",
@@ -9,5 +9,6 @@
   "MegaRAID 12GSAS": "OK",
   "LSI SAS3416 Fusion-MPT Tri-Mode": "OK",
   "LSI SAS3408 Fusion-MPT Tri-Mode": "OK",
-  "LSI SAS3008 PCI-Express Fusion-MPT": "OK"
+  "LSI SAS3008 PCI-Express Fusion-MPT": "OK",
+  "VMware PVSCSI SCSI Controller": "OK"
 }
