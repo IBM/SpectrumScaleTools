@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
 gnr_capacity_estimator - estimate usable file system capacity for a given
-Spectrum Scale GNR configuration
+IBM Storage Scale RAID configuration.
 
 This tool implements the tsgnrplan logic in python so it can be executed on
 system where python is installed.
@@ -69,7 +69,7 @@ CONVERT_DICT = {'KiB': 1,
 def show_header():
     print("")
     print(
-        "IBM Spectrum Scale Native RAID Estimator version " +
+        "IBM Storage Scale RAID Estimator version " +
         GCE_VERSION)
     print("This tool comes with no warranty of any kind")
     print("")
@@ -315,7 +315,7 @@ def get_pdisk_end_reserved(pdisk_size):
 
 def get_input():
     global DEBUG
-    parser = argparse.ArgumentParser(description='Spectrum Scale RAID '
+    parser = argparse.ArgumentParser(description='IBM Storage Scale RAID '
                                                  'Capacity Estimator')
     parser.add_argument('-n', '--node-count',
                         type=int, required=True,
@@ -480,7 +480,7 @@ if __name__ == '__main__':
                    }
         print(json.dumps(valdict))
     else:
-        print('Spectrum Scale RAID vdisk and file system summary:')
+        print('IBM Storage Scale RAID vdisk and file system summary:')
         print(34*'-')
         print('Total number of drives                {:>26d}'.
               format(numNodes * pdisksPerNode))

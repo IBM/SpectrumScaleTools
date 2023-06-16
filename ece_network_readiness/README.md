@@ -1,4 +1,4 @@
-This tool will run a network test across multiple nodes and compare the results against IBM Spectrum Scale Key Performance Indicators (KPI).
+This tool will run a network test across multiple nodes and compare the results against IBM Storage Scale Key Performance Indicators (KPI).
 This tool attempts to hide much of the complexity of running network measurement tools, and present the results in an easy to interpret way.
 
 **NOTE:** This tool would run for a long time, depending on the number of hosts to be tested. It estimates and shows the total runtime before the first interaction.
@@ -142,7 +142,7 @@ This test run estimation is 336 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. This is not a storage benchmark.
-They do not necessarily reflect the numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect the numbers you would see with IBM Storage Scale and your particular workload
 
 Do you want to continue? (y/n):
 ```
@@ -179,7 +179,7 @@ This test run estimation is 50 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. It is not a storage benchmark.
-They do not necessarily reflect that numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect that numbers you would see with IBM Storage Scale and your particular workload
 
 Do you want to continue? (y/n): y
 ```
@@ -342,7 +342,7 @@ This test run estimation is 336 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. This is not a storage benchmark.
-They do not necessarily reflect the numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect the numbers you would see with IBM Storage Scale and your particular workload
 
 Do you want to continue? (y/n): y
 

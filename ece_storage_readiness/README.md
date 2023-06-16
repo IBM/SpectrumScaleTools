@@ -22,7 +22,7 @@ Remarks:
 - This tool must be run with root privileges
 - Guess drives only works on Python 3 environments
 - The OS listed here are the supported for this tool. It does not imply on any way anything else beyond the scope of this tool
-- The block sizes are RAW device block sizes, not related to Spectrum Scale nor Spectrum Scale RAID block sizes
+- The block sizes are RAW device block sizes, not related to IBM Storage Scale nor IBM Storage Scale RAID block sizes
 - All drives must have at least a size of 8GB 
 - The KPI are based on 128k block size. A run with 128 read test must be passed to certify the environment
 
@@ -88,7 +88,7 @@ This test run estimation is 52 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. This is not a storage benchmark.
-They do not necessarily reflect the numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect the numbers you would see with IBM Storage Scale and your particular workload
 
 
 We are going to test the following drives
@@ -131,7 +131,7 @@ This test run estimation is 62 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. This is not a storage benchmark.
-They do not necessarily reflect the numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect the numbers you would see with IBM Storage Scale and your particular workload
 
 
 We are going to test the following drives
@@ -173,7 +173,7 @@ This test run estimation is 11 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. This is not a storage benchmark.
-They do not necessarily reflect the numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect the numbers you would see with IBM Storage Scale and your particular workload
 
 
 We are going to test the following drives
@@ -240,7 +240,7 @@ This test run estimation is 62 minutes
 This software comes with absolutely no warranty of any kind. Use it at your own risk
 
 NOTE: The bandwidth numbers shown in this tool are for a very specific test. This is not a storage benchmark.
-They do not necessarily reflect the numbers you would see with Spectrum Scale and your particular workload
+They do not necessarily reflect the numbers you would see with IBM Storage Scale and your particular workload
 
 
 We are going to test the following drives

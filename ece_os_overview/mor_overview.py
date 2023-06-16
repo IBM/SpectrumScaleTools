@@ -53,7 +53,7 @@ def parse_arguments():
     parser.add_argument('-v',
                         '--version',
                         action='version',
-                        version='IBM Spectrum Scale Erasure Code ' +
+                        version='IBM Storage Scale Erasure Code ' +
                         'Edition OS readiness overview version '
                         + MOR_OVERVIEW_VERSION)
 

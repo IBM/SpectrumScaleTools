@@ -1,8 +1,8 @@
-This tool uses the JSON files from ece_os_readiness in [SpectrumScaleTools](https://github.com/IBM/SpectrumScaleTools). This tools with no warranty and it just a helper to asses the hardware for usage with Spectrum Scale Erasure Code Edition.
+This tool uses the JSON files from ece_os_readiness in [SpectrumScaleTools](https://github.com/IBM/SpectrumScaleTools). This tools with no warranty and it just a helper to asses the hardware for usage with Storage Scale Erasure Code Edition.
 
 It does check for overall checks of homogeneity across the nodes. The assumption is that the nodes are belonging to the same recovery group (RG).
 
-It does not check for the number of nodes, and that is in purpose. Please notice this tool is designed to run with the Spectrum Scale install toolkit
+It does not check for the number of nodes, and that is in purpose. Please notice this tool is designed to run with the IBM Storage Scale install toolkit
 
 ```
 # ./mor_overview.py -h

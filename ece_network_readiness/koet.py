@@ -426,7 +426,7 @@ def show_header(koet_h_version, json_version,
         print(
             RED +
             "They do not necessarily reflect the numbers you would see with " +
-            "Spectrum Scale and your particular workload" +
+            "IBM Storage Scale and your particular workload" +
             NOCOLOR)
         print("")
         run_this = raw_input("Do you want to continue? (y/n): ")

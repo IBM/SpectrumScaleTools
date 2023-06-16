@@ -31,7 +31,7 @@ else:
 start_time_date = datetime.datetime.now()
 
 # This script version, independent from the JSON versions
-MOR_VERSION = "1.71"
+MOR_VERSION = "1.72"
 
 # GIT URLs
 GITREPOURL = "https://github.com/IBM/SpectrumScaleTools"
@@ -114,7 +114,7 @@ HW_REQUIREMENTS_MD5 = "a22d65d640888409219d70352dd7228d"
 NIC_ADAPTERS_MD5 = "27717648c59c586b4bdac4f1f624502f"
 PACKAGES_MD5 = "a15b08b05998d455aad792ef5d3cc811"
 SAS_ADAPTERS_MD5 = "36f40c9b3f4e8d935304ffbca3be8a87"
-SUPPORTED_OS_MD5 = "4153f6b62aa2ce4f4c3de4e3db422745"
+SUPPORTED_OS_MD5 = "fd921365008e29d1de9a3db0a3ae0198"
 
 # Functions
 def set_logger_up(output_dir, log_file, verbose):
@@ -242,14 +242,14 @@ def parse_arguments():
         '--toolkit',
         action='store_true',
         dest='toolkit_run',
-        help='To indicate is being run from Spectrum Scale install toolkit',
+        help='To indicate is being run from IBM Storage Scale install toolkit',
         default=False)
 
     parser.add_argument(
         '-V',
         '--version',
         action='version',
-        version='IBM Spectrum Scale Erasure Code Edition OS readiness ' +
+        version='IBM Storage Scale Erasure Code Edition OS readiness ' +
         'version: ' + MOR_VERSION)
 
     parser.add_argument(
@@ -398,7 +398,7 @@ def show_header(moh_version, json_version, toolkit_run):
     print(
         INFO +
         LOCAL_HOSTNAME +
-        " IBM Spectrum Scale Erasure Code Edition OS readiness version " +
+        " IBM Storage Scale Erasure Code Edition OS readiness version " +
         moh_version)
     if not toolkit_run:
         print(
@@ -1405,7 +1405,7 @@ def check_os_redhat(os_dictionary):
                 redhat_distribution_str +
                 " is a clone OS that is not officially supported" +
                 " to run ECE." +
-                " See Spectrum Scale FAQ for restrictions.")
+                " See IBM Storage Scale FAQ for restrictions.")
         else:
             sys.exit(error_message)
 
@@ -1740,10 +1740,10 @@ def tuned_adm_check():
 
     tuned_adm = subprocess.Popen(['tuned-adm', 'active'], stdout=subprocess.PIPE)
     tuned_adm.wait()
-    grep_rc_tuned = subprocess.call(['grep', 'Current active profile: spectrumscale-ece'], stdin=tuned_adm.stdout, stdout=DEVNULL, stderr=DEVNULL)
+    grep_rc_tuned = subprocess.call(['grep', 'Current active profile: storagescale-ece'], stdin=tuned_adm.stdout, stdout=DEVNULL, stderr=DEVNULL)
 
     if grep_rc_tuned == 0: # throughput-performance profile is active
-        print(INFO + LOCAL_HOSTNAME + " current active profile is spectrumscale-ece")
+        print(INFO + LOCAL_HOSTNAME + " current active profile is storagescale-ece")
         # try: #Is it fully matching?
         return_code = subprocess.call(['tuned-adm','verify'], stdout=DEVNULL, stderr=DEVNULL)
 
@@ -1755,7 +1755,7 @@ def tuned_adm_check():
             errors = errors + 1
 
     else: #Some error
-        print(ERROR + LOCAL_HOSTNAME + " current active profile is not spectrumscale-ece. Please check " + TUNED_TOOL)
+        print(ERROR + LOCAL_HOSTNAME + " current active profile is not storagescale-ece. Please check " + TUNED_TOOL)
         errors = errors + 1
 
     return errors
@@ -2854,8 +2854,9 @@ def get_supported_scsi_id(scsi_ctrl_dict):
         try:
             scsi_id = scsi_map_dict[scsi_addr]
         except KeyError as e:
-            sys.exit("{0}{1} tried to extract SCSI ID. Hit exception: ".
-                format(ERROR, LOCAL_HOSTNAME) + "{}".format(e))
+            print("{0}{1} No disk attached to {2} with PCI address {3}".
+                format(INFO, LOCAL_HOSTNAME, scsi_ctrl_dict[key], key))
+            continue
 
         supported_scsi_id_list.append(scsi_id)
 
@@ -3946,10 +3947,10 @@ def print_summary_standalone(
         )
 
     if nfatal_errors > 0:
-        sys.exit("{0}{1} cannot run IBM Spectrum Scale Erasure Code Edition".
+        sys.exit("{0}{1} cannot run IBM Storage Scale Erasure Code Edition".
             format(ERROR, LOCAL_HOSTNAME))
     elif all_checks_on:
-        print("{0}{1} can run IBM Spectrum Scale Erasure Code Edition".
+        print("{0}{1} can run IBM Storage Scale Erasure Code Edition".
             format(INFO, LOCAL_HOSTNAME))
         if sata_on:
             print(
