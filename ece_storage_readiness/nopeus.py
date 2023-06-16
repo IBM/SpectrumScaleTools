@@ -629,7 +629,7 @@ def show_header(json_version, estimated_runtime_str, fio_runtime, drives_diction
         print(
             RED +
             "The numbers do not reflect the numbers you would see with " +
-            "Spectrum Scale and your particular workload" +
+            "IBM Storage Scale and your particular workload" +
             NOCOLOR)
         print("")
         print_drives(drives_dictionary)

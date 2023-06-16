@@ -9594,9 +9594,9 @@ static void usage()
        << "                Must be supported by the device port (default is 2048)" << endl
        << "                Must be set on both client and server when starting nsdperf" << endl
        << "  -M MAXSEND    Max server RDMA read and write send size in bytes" << endl
-       << "                This option emulates Spectrum Scale \"verbsRdmaMaxSendBytes\" option" << endl
+       << "                This option emulates IBM Storage Scale \"verbsRdmaMaxSendBytes\" option" << endl
        << "  -S MAXSGE     Max server RDMA read and write sge entries" << endl
-       << "                This option emulates Spectrum Scale verbsRdmaMaxSge option" << endl
+       << "                This option emulates IBM Storage Scale verbsRdmaMaxSge option" << endl
        << "  -p PORT       TCP port to use (default " << NSDPERF_PORT << ")" << endl
        << "  -r RDMAPORTS  RDMA devices and ports to use (default first device, port 1)" << endl
        << "  -t NRCV       Number of receiver threads (default nCPUs, min 2)" << endl

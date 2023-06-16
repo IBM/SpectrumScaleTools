@@ -1,15 +1,15 @@
-This tool calculates the effective capacity of Spectrum Scale Native RAID systems. It is an estimation and actual figures could differ from the calculated ones. Be prepared for 1% deviations when using this tool. As a reminder, this tool comes with not warranty of any kind.
+This tool calculates the effective capacity of IBM Storage Scale RAID systems. It is an estimation and actual figures could differ from the calculated ones. Be prepared for 1% deviations when using this tool. As a reminder, this tool comes with not warranty of any kind.
 
 **TODO:**
  * Further tests to compare from real capacity vs calculated to tune the tool
 
 **PREREQUISITES:** Before running this tool you **must** fulfill the prerequisites:
  * python3 installed in the system
- * User must have understanding of Spectrum Scale Native RAID
+ * User must have understanding of IBM Storage Scale RAID
 
 The tool requires four parameters to be passed on when invoking them:
- * -n or --node-count ->  Number of storage nodes. For ESS this will be 2. For ECE it should be between 4 and 32.
- * -p or --pdisk-per-node -> Number of identically sized pdisks per storage node.
+ * -n or --node-count ->  Number of storage nodes. For ESS this will be 2. For ECE it should be between 4 and 32
+ * -p or --pdisk-per-node -> Number of identically sized pdisks per storage node
  * -e or --erasure-code -> Erasure code for vdisks, from ['4+2p', '8+3p', '8+2p','4+3p']
  * Capacity of each pdisk either on GiB (-s or --pdisk-size-gib) or TB (-t or --pdisk-size-tb)
 
@@ -20,7 +20,7 @@ The help includes the description of the optional parameters
 ```
 $ ./gnr_capacity_estimator.py -h
 
-IBM Spectrum Scale Native RAID Estimator version 1.2
+IBM Storage Scale RAID Estimator version 1.3
 This tool comes with no warranty of any kind
 
 Please check https://github.com/IBM/SpectrumScaleTools for updates and other information
@@ -31,7 +31,7 @@ usage: gnr_capacity_estimator.py [-h] -n NODE_COUNT -p PDISK_PER_NODE
                                  [-x] [-j] [--spare-drives SPARE_DRIVES]
                                  [--set-size SET_SIZE] [-v]
 
-Spectrum Scale RAID Capacity Estimator
+IBM Storage Scale RAID Capacity Estimator
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -75,7 +75,7 @@ As example to run an estimation of an ECE system of 12 nodes that have 12 4 TB d
 The output for the above run is
 
 ```
-IBM Spectrum Scale Native RAID Estimator version 1.0
+IBM Storage Scale Native RAID Estimator version 1.3
 This tool comes with no warranty of any kind
 
 Please check https://github.com/IBM/SpectrumScaleTools for updates or other information
@@ -91,7 +91,7 @@ Disk type:                                                   hdd
 Checksum granularity (KiB):                                   32
 Include loghome vdisks?                                     True
 
-Spectrum Scale RAID vdisk and file system summary:
+IBM Storage Scale RAID vdisk and file system summary:
 ----------------------------------
 Total number of drives                                       144
 Spare capacity in number of drives:                            6

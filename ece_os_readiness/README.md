@@ -1,9 +1,9 @@
-This tool assesses the readiness of a single node to install IBM Spectrum Scale Erasure Code Edition (ECE). This tool only checks for requirement of a system that can run ECE, no other software or middleware on top in the same server.
+This tool assesses the readiness of a single node to install IBM Storage Scale Erasure Code Edition (ECE). This tool only checks for requirement of a system that can run ECE, no other software or middleware on top in the same server.
 
-Run this tool before installing ECE with the Spectrum Scale toolkit, it is used by the toolkit to do a more comprehensive node checking from a cluster perspective, this tool checks at node level. Each run generates a JSON file with name IP_ADDRESS.json where data is saved. In standalone mode this file is only for reference.
+Run this tool before installing ECE with the IBM Storage Scale toolkit, it is used by the toolkit to do a more comprehensive node checking from a cluster perspective, this tool checks at node level. Each run generates a JSON file with name IP_ADDRESS.json where data is saved. In standalone mode this file is only for reference.
 
 **IMPORTANT**
-This tool does not overrule the official documentation of the product. The requirements stated on the official documentation as "Minimum hardware requirements and precheck" in https://www.ibm.com/docs/en/spectrum-scale-ece
+This tool does not overrule the official documentation of the product. The requirements stated on the official documentation as "Minimum hardware requirements and precheck" in https://www.ibm.com/docs/en/storage-scale-ece
 
 **Known limitations**
 - Current code works correctly only if the system had one or none SAS card. It does not work properly with more than one SAS card yet. Results cannot be trusted when more than one SAS card is on the system. Multiple SAS cards checking is planned to be addressed in future.
@@ -49,8 +49,8 @@ optional arguments:
   --no-tuned-check     Does not run tuned checks
   --allow-sata         EXPERIMENTAL: To do checks on SATA drives. Do NOT use
                        for real checks
-  --toolkit            To indicate is being run from Spectrum Scale install
-                       toolkit
+  --toolkit            To indicate is being run from IBM Storage Scale
+                       install toolkit
   -V, --version        show program's version number and exit
   -v, --verbose        Shows debug messages on console
 ```
@@ -61,7 +61,7 @@ optional arguments:
 
   ```
 # python3 mor.py --ip 10.168.3.101
-[ INFO  ] c72f3u01 IBM Spectrum Scale Erasure Code Edition OS readiness version 1.71
+[ INFO  ] c72f3u01 IBM Storage Scale Erasure Code Edition OS readiness version 1.71
 [ INFO  ] c72f3u01 This tool comes with absolute not warranty
 [ INFO  ] c72f3u01 Please check https://github.com/IBM/SpectrumScaleTools for details
 [ INFO  ] c72f3u01 JSON files versions:
@@ -122,7 +122,7 @@ optional arguments:
 [ INFO  ] c72f3u01 checking 10.168.3.101 device and link speed
 [ INFO  ] c72f3u01 the IP address 10.168.3.101 is found on device ib1
 [ INFO  ] c72f3u01 interface ib1 has a link of 100000 Mb/s. Which is supported to run ECE
-[ INFO  ] c72f3u01 current active profile is spectrumscale-ece
+[ INFO  ] c72f3u01 current active profile is storagescale-ece
 [ INFO  ] c72f3u01 tuned is matching the active profile
 [ INFO  ] c72f3u01 python 3 YAML module found
 
@@ -147,14 +147,14 @@ optional arguments:
 
 		./10.168.3.101.json contains information about this run
 
-[ INFO  ] c72f3u01 can run IBM Spectrum Scale Erasure Code Edition
+[ INFO  ] c72f3u01 can run IBM Storage Scale Erasure Code Edition
   ```
 
   A failed example is as follows:
 
   ```
 # ./mor.py --ip 10.168.2.17
-[ INFO  ] c72f4m5u17 IBM Spectrum Scale Erasure Code Edition OS readiness version 1.71
+[ INFO  ] c72f4m5u17 IBM Storage Scale Erasure Code Edition OS readiness version 1.71
 [ INFO  ] c72f4m5u17 This tool comes with absolute not warranty
 [ INFO  ] c72f4m5u17 Please check https://github.com/IBM/SpectrumScaleTools for details
 [ INFO  ] c72f4m5u17 JSON files versions:
@@ -218,7 +218,7 @@ optional arguments:
 [ INFO  ] c72f4m5u17 checking 10.168.2.17 device and link speed
 [ INFO  ] c72f4m5u17 the IP address 10.168.2.17 is found on device ib0
 [ INFO  ] c72f4m5u17 interface ib0 has a link of 100000 Mb/s. Which is supported to run ECE
-[ INFO  ] c72f4m5u17 current active profile is spectrumscale-ece
+[ INFO  ] c72f4m5u17 current active profile is storagescale-ece
 [ INFO  ] c72f4m5u17 tuned is matching the active profile
 [ INFO  ] c72f4m5u17 python 3 YAML module found
 
@@ -243,5 +243,5 @@ optional arguments:
 
 		./10.168.2.17.json contains information about this run
 
-[ FATAL ] c72f4m5u17 cannot run IBM Spectrum Scale Erasure Code Edition
+[ FATAL ] c72f4m5u17 cannot run IBM Storage Scale Erasure Code Edition
   ```
