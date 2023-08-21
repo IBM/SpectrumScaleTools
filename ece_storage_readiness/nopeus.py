@@ -1,1456 +1,1637 @@
-#!/usr/bin/python
+"""
+This module can launch random read test against raw storage device
+using FIO benchmark and present the results in a way that is easy to interpret.
+It compares the test results with Key Performance Indicators (KPI) then
+determines if the storage devices in localhost is ready.
+"""
+
 import json
 import os
 import sys
-import stat
 import datetime
-import platform
-import time
 import argparse
+import shlex
 from math import ceil
-import subprocess
+from stat import S_ISBLK
+from subprocess import Popen, PIPE
 
-
-# This script version, independent from the JSON versions
-NOPEUS_VERSION = "1.10"
-
-# Colorful constants
 RED = '\033[91m'
+BLUE = '\033[34m'
 GREEN = '\033[92m'
+PURPLE = '\033[35m'
 YELLOW = '\033[93m'
-NOCOLOR = '\033[0m'
+RESETCOLOR = '\033[0m'
+
+INFO = "[ {0}INFO{1}  ] ".format(GREEN, RESETCOLOR)
+WARN = "[ {0}WARN{1}  ] ".format(YELLOW, RESETCOLOR)
+ERRO = "[ {0}FATAL{1} ] ".format(RED, RESETCOLOR)
+QUIT = "[ {0}QUIT{1}  ] ".format(RED, RESETCOLOR)
+
+VERSION = "1.20"
+GIT_URL = "https://github.com/IBM/SpectrumScaleTools"
+BASEDIR = os.path.dirname(os.path.realpath(__file__))
+
+"""
+Default options for this script command line
+"""
+DEFAULT_BS = '128k'
+DEFAULT_NJ = 1
+DEFAULT_RT = 300
+BS_CHOICES = ['4k', '128k', '256k', '512k', '1m', '2m']
+STORDEV_FL = "{}/storage_devices.json".format(BASEDIR)
 
 try:
-    raw_input      # Python 2
-    PYTHON3 = False
-except NameError:  # Python 3
-    raw_input = input
-    PYTHON3 = True
+    input = raw_input
+except NameError:
+    pass
 
-if PYTHON3:
+
+def load_json(json_file):
+    """
+    Params:
+        json_file: a file path string with json format.
+    Returns:
+        Python Dictionary object load from json file.
+        None if hit error.
+    """
+    if not json_file or isinstance(json_file, str) is False:
+        print("{}Invalid parameter: json_file".format(ERRO))
+        return None
     try:
-        import distro
-    except ModuleNotFoundError:
-        sys.exit(RED + "QUIT: " + NOCOLOR + "python3-distro is missing. Please install it.\n")
-else:
-    import commands
+        with open(json_file, 'r') as fh:
+            return json.load(fh)
+    except Exception as e:
+        print("{0}Tried to load JSON file {1} but hit ".format(ERRO, json_file) +
+              "exception: {}".format(e))
+        return None
 
 
-# KPI + runtime acceptance values. This is sized for 128k randread
-FIO_RUNTIME = int(300)  # Acceptance value should be this or higher
-MAX_PCT_DIFF = 10  # We allow up to 10% difference on drives of same type
-MIN_IOPS_NVME = float(10000)
-MIN_IOPS_SSD = float(800)
-MIN_IOPS_HDD = float(55)
-MEAN_IOPS_NVME = float(15000)
-MEAN_IOPS_SSD = float(1200)
-MEAN_IOPS_HDD = float(110)
-MAX_LATENCY_NVME = float(20)  # msec
-MAX_LATENCY_SSD = float(100)  # msec
-MAX_LATENCY_HDD = float(1500)  # msec
-MEAN_LATENCY_NVME = float(1.5)  # msec
-MEAN_LATENCY_SSD = float(20.0)  # msec
-MEAN_LATENCY_HDD = float(150.0)  # msec
+def dump_json(src_kv, dst_file):
+    """
+    Params:
+        src_kv: Python dictionay object to be recorded.
+        dst_file: a file path used to save Python dictionay object.
+    Returns:
+        0 if succeeded.
+        1 if hit error.
+    """
+    if not src_kv or isinstance(src_kv, dict) is False:
+        print("{}Invalid parameter: src_kv".format(ERRO))
+        return 1
+    if not dst_file or isinstance(dst_file, str) is False:
+        print("{}Invalid parameter: dst_file".format(ERRO))
+        return 1
 
-# GITHUB URL
-GIT_URL = "https://github.com/IBM/SpectrumScaleTools"
-
-# devnull redirect destination
-DEVNULL = open(os.devnull, 'w')
-
-
-def load_json(json_file_str):
-    # Loads  JSON into a dictionary or quits the program if it cannot. Future
-    # might add a try to donwload the JSON if not available before quitting
     try:
-        with open(json_file_str, "r") as json_file:
-            json_variable = json.load(json_file)
-            return json_variable
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot open JSON file: " + json_file_str)
+        src_data = json.dumps(src_kv, indent=4)
+        with open(dst_file, 'w') as fh:
+            fh.write(src_data)
+        return 0
+    except Exception as e:
+        print("{0}Tried to [over]write {1} but hit exception: {2}\n".format(
+              ERRO, dst_file, e))
+        return 1
 
 
-def json_file_loads(json_file_str):
-    # We try to load the JSON and return the success of failure
-    try:
-        with open(json_file_str, "r") as json_file_test:
-            json_variable = json.load(json_file_test)
-            json_file_test.close()
-            json_loads = True
-    except Exception:
-        json_loads = False
-    return json_loads
-
-
-def get_json_versions(
-                    os_dictionary,
-                    packages_dictionary):
-    # Gets the versions of the json files into a dictionary
-    json_version = {}
-
-    # Lets see if we can load version, if not quit
-    try:
-        json_version['supported_OS'] = os_dictionary['json_version']
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot load version from supported OS JSON")
-    try:
-        json_version['packages'] = packages_dictionary['json_version']
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot load version from packages JSON")
-    # If we made it this far lets return the dictionary. This was being stored
-    # in its own file before
-    return json_version
-
-
-def parse_arguments():
-    valid_test = True
-    parser = argparse.ArgumentParser()
-    # We include number of runs and KPI as optional arguments
-    parser.add_argument(
-        '-b',
-        '--block-sizes',
-        action='store',
-        dest='block_sizes',
-        help='Block size for tests. ' +
-        'The default and value to certify the environment is 128k. ' +
-        'You can pick one from the following: 4k 128k 256k 512k 1024k',
-        metavar='BS_CSV',
-        type=str,
-        default="128k")
-
-    parser.add_argument(
-        '--guess-drives',
-        action='store_true',
-        dest='guess_drives',
-        help='It guesses the drives to test and adds them to the ' +
-        'drives.json file overwritting its content. You should then ' +
-        'manually review the file content before running the tool again',
-        default=False)
-
-    parser.add_argument(
-        '--i-want-to-lose-my-data',
-        action='store_true',
-        dest='write_test',
-        help='It makes the test a write test instead of read. This will ' +
-        'delete the data that is on the drives. So if you ' +
-        'care about the keeping the data on the drives you really should not ' +
-        'run with this parameter. Running with this paramenter will delete all data ' +
-        'on the drives',
-        default=False)
-
-    parser.add_argument(
-        '-t',
-        '--time-per-test',
-        action='store',
-        dest='fio_runtime',
-        help='The number of seconds to run each test. ' +
-        'The value has to be at least 30 seconds.' +
-        'The minimum required value for certification is ' +
-        str(FIO_RUNTIME),
-        metavar='FIO_RUNTIME',
-        type=int,
-        default=int(FIO_RUNTIME))
-
-    parser.add_argument(
-        '--rpm_check_disabled',
-        action='store_true',
-        dest='no_rpm_check',
-        help='Disables the RPM prerequisites check. Use only if you are ' +
-        'sure all required software is installed and no RPM were used ' +
-        'to install the required prerequisites. Otherwise this tool will fail',
-        default=False)
-
-    parser.add_argument('-v', '--version', action='version',
-                        version='NOPEUS ' + NOPEUS_VERSION)
-    args = parser.parse_args()
-    if args.fio_runtime < 30:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "FIO runtime cannot be less than 30 seconds\n")
-    if args.fio_runtime < FIO_RUNTIME:
-        valid_test = False
-
-    # Lets check that BS_CSV is CSV format AND that has the values we accept
-    bs_list = []
-    valid_bs = ["4k", "128k", "256k", "512k", "1024k"]
-    try:
-        block_zizes_raw = args.block_sizes
-        block_sizes = block_zizes_raw.split(",")
-        for block_size in block_sizes:
-            if block_size in valid_bs:
-                bs_list.append(block_size)
-            else:
-                sys.exit(RED + "QUIT: " + NOCOLOR +
-                         "block sizes parameter contains invalid value[s]")        
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "block sizes parameter is not on CSV format")
-    # For the time being we only accept ONE block size for the test, enforce it
-    if len(bs_list) > 1:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "block sizes parameter only allows one value at this time")
-    # KPIs are sized for randread 128k so we mark valid test OK for those only
-    if "128k" not in bs_list:
-        valid_test = False
-
-    patterns_list = []
-    #valid_patterns = ["randread", "randwrite"]
-    if args.write_test:
-        patterns_list.append("randwrite")
-    else:
-        patterns_list.append("randread")
-
-    return (valid_test, bs_list, patterns_list, args.guess_drives, args.write_test, args.fio_runtime, args.no_rpm_check)
-
-
-def rpm_is_installed(rpm_package):
-    # returns the RC of rpm -q rpm_package or quits if it cannot run rpm
-    try:
-        return_code = subprocess.call(
-            ['rpm', '-q', rpm_package], stdout=DEVNULL, stderr=DEVNULL)
-    except BaseException:
-        sys.exit(RED + "QUIT: " + NOCOLOR + "cannot run rpm\n")
-    return return_code
-
-
-def packages_check(packages_dictionary):
-
-    # Checks if packages from JSON are installed or not based on the input
-    # data ont eh JSON
-    errors = 0
-    print(GREEN + "INFO: " + NOCOLOR + "checking packages install status")
-    for package in packages_dictionary.keys():
-        if package != "json_version":
-            current_package_rc = rpm_is_installed(package)
-            expected_package_rc = packages_dictionary[package]
-            if current_package_rc == expected_package_rc:
-                print(
-                    GREEN +
-                    "OK: " +
-                    NOCOLOR +
-                    "installation status of " +
-                    package +
-                    " is as expected")
-            else:
-                print(
-                    YELLOW +
-                    "WARNING: " +
-                    NOCOLOR +
-                    "installation status of " +
-                    package +
-                    " is *NOT* as expected")
-                errors = errors + 1
-    return(errors)
+def is_fio_available():
+    """
+    Params:
+    Returns:
+        0 if fio is available.
+        1 if not.
+    """
+    child = Popen(shlex.split('fio -v'), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    out, err = child.communicate()
+    out = out.strip()
+    if child.returncode != 0 or not out:
+        print("{}Ran cmd: fio -v".format(INFO))
+        if err:
+            if isinstance(err, bytes) is True:
+                err = err.decode()
+            print("{0}{1}".format(ERRO, err))
+        print("{}It seems fio is not available on this host".format(ERRO))
+        return 1
+    if isinstance(out, bytes) is True:
+        out = out.decode()
+    fio_ver = out.strip()
+    print("{0}This host has fio binary file with version {1} ".format(INFO,
+          fio_ver) + "which could be used directly")
+    return 0
 
 
 def check_root_user():
-    effective_uid = os.getuid()
+    """
+    Params:
+    Returns:
+        0 if under root user.
+        1 if not under root user or hit error.
+    """
+    try:
+        effective_uid = os.getuid()
+    except BaseException as e:
+        print("{}Tried to get current UID but hit ".format(ERRO) +
+              "exception: {}\n".format(e))
+        return 1
+
     if effective_uid == 0:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "the tool is being run as root")
+        print("{}Current user is root".format(INFO))
+        return 0
     else:
-        sys.exit(RED +
-                 "QUIT: " +
-                 NOCOLOR +
-                 "this tool needs to be run as root\n")
-
-def check_permission_files():
-    #Check executable bits and read bits for files
-    readable_files=["packages.json", "supported_OS.json"]
-    executable_files=[]
-
-    read_error = False
-    for file in readable_files:
-        if not os.access(file,os.R_OK):
-            read_error = True
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "cannot read file " +
-                  str(file) +
-                  ". Have the POSIX ACL been changed?")
-    exec_error = False
-    for file in executable_files:
-        if not os.access(file,os.X_OK):
-            exec_error = True
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "cannot execute file " +
-                  str(file) +
-                  ". Have the POSIX ACL been changed?")
-
-    if read_error or exec_error:
-        fatal_error = True
-    else:
-        fatal_error = False
-    return fatal_error
+        print("{}This tool should be run under root user".format(ERRO))
+        return 1
 
 
-def check_drives_json(drives_dictionary):
-    errors = 0
-    print(GREEN + "INFO: " + NOCOLOR + "checking drives")
-    # Lets check we have HDD, SSD or NVME on the entries
-    for drive in drives_dictionary.keys():
-        if drives_dictionary[drive].upper() == "HDD" or drives_dictionary[drive].upper() == "SSD" or drives_dictionary[drive].upper() == "NVME":
-            print(GREEN + "INFO: " + NOCOLOR + drive + " drive in the JSON file seems to be correctly populated")
-        else:
-            print(RED + "ERROR: " + NOCOLOR + drive + " drive in the JSON file seems to be wrongly populated")
-            errors = errors + 1
-    if errors > 0:
-        sys.exit(RED + "ERROR: " + NOCOLOR + "please check the drives JSON and check the README or GitHub repository for help\n")
-    number_of_drives = len(drives_dictionary)
-    if number_of_drives == 0:
-        sys.exit(RED + "ERROR: " + NOCOLOR + "there are no drives defined for testing\n")
+def is_file_readable(fp):
+    """
+    Params:
+        fp: a file path string.
+    Returns:
+        'yes' if given file is readable.
+        'no' if hit error.
+    """
+    if not fp or isinstance(fp, str) is False:
+        print("{}Invalid parameter: fp".format(ERRO))
+        return 'no'
+    if os.path.isfile(fp) is False:
+        print("{0}{1} is not a rugular file".format(ERRO, fp))
+        return 'no'
+    if os.access(fp, os.R_OK) is False:
+        print("{0}{1} does not have read permission".format(ERRO, fp))
+        return 'no'
+    if os.path.getsize(fp) == 0:
+        print("{0}{1} is an empy file".format(ERRO, fp))
+        return 'no'
+    return 'yes'
 
 
-def try_guess_drives():
-    #We guess the drives and write to drives.json file, then exit
-    #Guess
-    guess_boot_drive_command = "df -l |grep /boot |grep -v /boot/ | awk '($1~/dev/){print $1}' | tr -d '[0-9]' | cut -c6-"
-    boot_drive = subprocess.getoutput(guess_boot_drive_command)
-    guess_command = "lsblk -d -o name,rota --json"
-    test_drives = subprocess.getoutput(guess_command)
-    lsblk_dict = json.loads(test_drives)
-    blockdevices_list = lsblk_dict["blockdevices"]
+def get_boot_devices():
+    """
+    Params:
+    Returns:
+        ['/dev/sdx', '/dev/sdy',...] if succeeded.
+        [] if no boot device.
+        ['error'] if hit error.
+    """
+    print("{}Guess localhost OS boot device".format(INFO))
+    child = Popen(shlex.split('df -l'), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    out, err = child.communicate()
+    out = out.strip()
+    if child.returncode != 0 or not out:
+        print("{}Ran cmd: df -l".format(INFO))
+        if err:
+            if isinstance(err, bytes) is True:
+                err = err.decode()
+            print("{0}{1}".format(ERRO, err))
+        print("{}Failed to get localhost boot device".format(ERRO))
+        return ['error']
+    if isinstance(out, bytes) is True:
+        out = out.decode()
+    boot_devs = []
+    out_lines = out.splitlines()
+    for line in out_lines:
+        if '/boot' in line and '/boot/' not in line:
+            line_to_list = line.split()
+            boot_dev = ''.join([c for c in line_to_list[0] if not c.isdigit()])
+            boot_devs.append(boot_dev)
+    if not boot_devs:
+        print("{}It seems localhost has no boot device".format(WARN))
+    return boot_devs
 
-    #Lets parse the output and add it to dict
-    drives_dictionary = {}
-    for drives in blockdevices_list:
-        if drives['name'] == boot_drive:
-            continue
-        if drives['rota'] == '1' and ('sd' in drives['name']):
-            drives_dictionary.update({drives['name']: "HDD"})
-        elif ('nvme' in drives['name']):
-            drives_dictionary.update({drives['name']: "NVME"})
-        elif ('sd' in drives['name']):
-            drives_dictionary.update({drives['name']: "SSD"})
 
-    return drives_dictionary
-
-
-def write_json_file_from_dictionary(hosts_dictionary, json_file_str):
-    # We are going to generate or overwrite the hosts JSON file
+def guess_storage_devices():
+    """
+    Params:
+    Returns:
+        {'/dev/sda': 'HDD', ...} if succeeded.
+        {} if hit error.
+    """
+    boot_devs = get_boot_devices()
+    if 'error' in boot_devs:
+        return {}
+    print("{}Guess storage devices in localhost".format(INFO))
+    lsblk_cmd = 'lsblk --path -d -o name,rota --json'
+    child = Popen(shlex.split(lsblk_cmd), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    out, err = child.communicate()
+    out = out.strip()
+    if child.returncode != 0 or not out:
+        print("{0}Ran cmd: {1}".format(INFO, lsblk_cmd))
+        if err:
+            if isinstance(err, bytes) is True:
+                err = err.decode()
+            print("{0}{1}".format(ERRO, err))
+            if 'unrecognized option' in err and '--json' in err:
+                print("{}It seems lsblk version on localhost ".format(ERRO) +
+                      "is too low to support json format")
+        print("{}Failed to get storage device from localhost".format(ERRO))
+        print("{0}Please manually populate {1}".format(INFO, STORDEV_FL))
+        return {}
+    if isinstance(out, bytes) is True:
+        out = out.decode()
     try:
-        with open(json_file_str, "w") as json_file:
-            json.dump(hosts_dictionary, json_file)
-            print(GREEN + "OK: " + NOCOLOR + "JSON file: " + json_file_str +
-                  " has been [over]written")
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot write JSON file: " + json_file_str)
+        lsblk_kv = json.loads(out)
+        block_devs = lsblk_kv['blockdevices']
+    except BaseException as e:
+        print("{0}Tried to get 'blockdevices' but hit exception: {1}".format(
+              ERRO, e))
+        print("{0}Please manually populate {1}".format(INFO, STORDEV_FL))
+        return {}
+
+    dev_kv = {}
+    for drive_kv in block_devs:
+        if boot_devs:
+            if drive_kv['name'] in boot_devs:
+                continue
+        if drive_kv['rota'] == '1' and '/dev/sd' in drive_kv['name']:
+            dev_kv.update({drive_kv['name']: 'HDD'})
+        elif drive_kv['rota'] == '0' and '/dev/sd' in drive_kv['name']:
+            dev_kv.update({drive_kv['name']: 'SSD'})
+        elif '/dev/nvme' in drive_kv['name']:
+            dev_kv.update({drive_kv['name']: 'NVME'})
+    if not dev_kv:
+        print("{}It seems localhost has no storage device ".format(ERRO))
+        print("{0}Please manually populate {1}".format(INFO, STORDEV_FL))
+    return dev_kv
 
 
-def print_drives(drives_dictionary):
-    #print and ask for continue from end user
-    if len(drives_dictionary) > 0:
-        print("")
-        print("We are going to test the following drives")
-        print("")
-        for drive in drives_dictionary.keys():
-            print("\tDrive: " + str(drive) + " as " + str(drives_dictionary[drive]))
-    print("")
-
-
-def check_drive_exists(drives_dictionary):
-    #SOme checks to see if real devices
-    print(GREEN + "INFO: " + NOCOLOR + "checking devices status")
-    errors = 0
-    for drive in drives_dictionary.keys():
-        full_path_drive = "/dev/" + drive
-        try:
-            stat.S_ISBLK(os.stat(full_path_drive).st_mode)
-            is_there = True
-        except BaseException:
-            is_there = False
-        if is_there:
-            print(
-                GREEN +
-                "OK: " +
-                NOCOLOR +
-                drive +
-                " defined as " +
-                drives_dictionary[drive] +
-                " is a block device")
-        else:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                drive +
-                " defined as " +
-                drives_dictionary[drive] +
-                " is not a block device")
-            errors = errors + 1
-    if errors > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR + "please check drives definition\n")
-
-def check_distribution():
-    # Decide if this is a redhat or a CentOS. We only checking the running
-    # node, that might be a problem
-    if PYTHON3:
-        what_dist = distro.linux_distribution()[0].lower()
-    else:
-        what_dist = platform.dist()[0].lower()
-    if what_dist == "redhat" or "centos" or "centos linux" or "fedora":
-        return what_dist
-    else:  # everything esle we fail
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "this only run on RedHat at this moment")
-
-
-def check_os_redhat(os_dictionary):
-    redhat8 = False
-    # Check redhat-release vs dictionary list
-    if PYTHON3:
-        redhat_distribution = distro.linux_distribution()
-    else:
-        redhat_distribution = platform.linux_distribution()
-    redhat_distribution_str = redhat_distribution[0] + \
-        " " + redhat_distribution[1]
-    error_message = RED + "QUIT: " + NOCOLOR + " " + \
-        redhat_distribution_str + " is not a supported OS for this tool\n"
+def ns_to_ms(ns):
+    """
+    Params:
+        ns: nanoseconds
+    Returns:
+        milliseconds if succeeded.
+        exit if hit error.
+    """
+    if isinstance(ns, float) is False and isinstance(ns, int) is False:
+        sys.exit("{}Invalid parameter: ns\n".format(QUIT))
+    if not ns:
+        sys.exit("{}Empty parameter: ns\n".format(QUIT))
     try:
-        if os_dictionary[redhat_distribution_str] == 'OK':
-            #print(GREEN + "OK: " + NOCOLOR + redhat_distribution_str +
-            #      " is a supported OS for this tool")
-            #print("")
-            if redhat_distribution[1] == "8.0" or "8.1":
-                redhat8 = True
-        else:
-            sys.exit(error_message)
-    except Exception as e:
-        sys.exit(error_message)
-        print("")
-    return redhat8
+        ms = float(ns / 1000000.0)
+        ms = float("{:.2f}".format(ms))
+        return ms
+    except BaseException as e:
+        sys.exit("{}Tried to convert nanoseconds to milliseconds ".format(QUIT) +
+              "but hit exception: {}\n".format(e))
 
 
-def run_tests(fio_runtime, drives_dictionary, log_dir_timestamp, bs_list, patterns_list):
-    #Lets define a basic run then interate, only reads!
-    for pattern in patterns_list:
-        for blocksize in bs_list:
-            for device in drives_dictionary.keys():
-                print(GREEN + "INFO: " + NOCOLOR + "Going to start test " + str(pattern) + " with blocksize of " + str(blocksize) + " on device " + str(device) + " please be patient")
-                fio_command = "fio --minimal --invalidate=1 --ramp_time=10 --iodepth=16 --ioengine=libaio --time_based --direct=1 --stonewall --io_size=268435456 --offset=4802187264 --runtime="+str(fio_runtime)+" --bs="+str(blocksize)+" --rw="+str(pattern)+" --filename="+str("/dev/"+device)+" --name="+str(device+"_"+pattern+"_"+blocksize)+" --output-format=json --output="+str("./log/"+log_dir_timestamp+"/"+device+"_"+pattern+"_"+blocksize+".json")
-                #print (fio_command)
-                fio_command_list = fio_command.split()
-                rc = subprocess.call(fio_command_list)
-                if rc != 0:
-                    sys.exit(RED + "ERROR: " + NOCOLOR + " " + str(fio_command) + " command return a non zero return code\n")
-                print("")  # To not overwrite last output line from FIO
-                print(GREEN + "INFO: " + NOCOLOR + "Completed test " + str(pattern) + " with blocksize of " + str(blocksize) + " on device " + str(device))
-    print(GREEN + "INFO: " + NOCOLOR + "All single drive tests completed")
-
-
-def run_parallel_tests(fio_runtime, drives_dictionary, log_dir_timestamp, bs_list, patterns_list):
-    HDD_drives = []
-    SSD_drives = []
-    NVME_drives = []
-    parallel_tests = []
-    for device in drives_dictionary.keys():
-        if drives_dictionary[device] == "HDD":
-            HDD_drives.append(device)
-        elif drives_dictionary[device] == "SSD":
-            SSD_drives.append(device)
-        elif drives_dictionary[device] == "NVME":
-            NVME_drives.append(device)
-    if len(HDD_drives) > 1:
-        device_long_all = ""
-        parallel_tests.append("HDD")
-        for device_short in HDD_drives:
-            device_long_all = device_long_all + "/dev/" + device_short + ":"
-        parallel_run(fio_runtime, device_long_all, "HDD", log_dir_timestamp, bs_list, patterns_list)
-    if len(SSD_drives) > 1:
-        device_long_all = ""
-        parallel_tests.append("SSD")
-        for device_short in SSD_drives:
-            device_long_all = device_long_all + "/dev/" + device_short + ":"
-        parallel_run(fio_runtime, device_long_all, "SSD", log_dir_timestamp, bs_list, patterns_list)
-    if len(NVME_drives) > 1:
-        device_long_all = ""
-        parallel_tests.append("NVME")
-        for device_short in NVME_drives:
-            device_long_all = device_long_all + "/dev/" + device_short + ":"
-        parallel_run(fio_runtime, device_long_all, "NVME", log_dir_timestamp, bs_list, patterns_list)
-
-    print(GREEN + "INFO: " + NOCOLOR + "All parallel tests completed")
-    return parallel_tests
-
-def parallel_run(fio_runtime, device_long_all, device_type, log_dir_timestamp, bs_list, patterns_list):
-    for pattern in patterns_list:
-        for blocksize in bs_list:
-            print(GREEN + "INFO: " + NOCOLOR + "Going to start test " + str(pattern) + " with blocksize of " + str(blocksize) + " on all devices of type " + str(device_type) + ". Please be patient")
-            fio_command = "fio --minimal --invalidate=1 --ramp_time=10 --iodepth=16 --ioengine=libaio --time_based --direct=1 --stonewall --io_size=268435456 --offset=4802187264 --runtime="+str(fio_runtime)+" --bs="+str(blocksize)+" --rw="+str(pattern)+" --filename="+str(device_long_all)+" --name="+str(device_type+"_"+pattern+"_"+blocksize)+" --output-format=json --output="+str("./log/"+log_dir_timestamp+"/"+device_type+"_"+pattern+"_"+blocksize+".json")
-            fio_command_list = fio_command.split()
-            rc = subprocess.call(fio_command_list)
-            if rc != 0:
-                sys.exit(RED + "ERROR: " + NOCOLOR + " " + str(fio_command) + " command return a non zero return code\n")
-            print("")  # To not overwrite last output line from FIO
-            print(GREEN + "INFO: " + NOCOLOR + "Completed test " + str(pattern) + " with blocksize of " + str(blocksize) + " on devices of type " + str(device_type))
-
-
-def create_local_log_dir(log_dir_timestamp):
-    logdir = os.path.join(
-        os.getcwd(),
-        'log',
-        log_dir_timestamp)
+def KiB_to_MiB(kib):
+    """
+    Params:
+        kib: kibibyte
+    Returns:
+        mebibyte if succeeded.
+        exit if hit error.
+    """
+    if isinstance(kib, float) is False and isinstance(kib, int) is False:
+        sys.exit("{}Invalid parameter: kib\n".format(QUIT))
+    if not kib:
+        sys.exit("{}Empty parameter: kib\n".format(QUIT))
     try:
-        os.makedirs(logdir)
-        return logdir
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot create local directory " + logdir + "\n")
+        mib = float(kib / 1024.0)
+        mib = float("{:.2f}".format(mib))
+        return mib
+    except BaseException as e:
+        sys.exit("{}Tried to convert kibibyte to mebibyte ".format(QUIT) +
+              "but hit exception: {}\n".format(e))
+
+
+def calc_diff_pct(data_set):
+    """
+    Params:
+        data_set: a list with a series of number.
+    Returns:
+        The difference in percentage of the list.
+        Which is defined as: 100 * (Max - Min) / Max.
+        -1 if hit error.
+    """
+    if not data_set or isinstance(data_set, list) is False:
+        print("{}Invalid parameter: data_set".format(ERRO))
+        return -1
+
+    try:
+        max_val = max(data_set)
+        min_val = min(data_set)
+        raw_diff_pct = 100 * (max_val - min_val) / max_val
+        diff_pct = float("{:.2f}".format(raw_diff_pct))
+    except BaseException as e:
+        print("{}Tried to calculate difference percentage ".format(ERRO) +
+              "but hit exception: {}".format(e))
+        return -1
+    return diff_pct
 
 
 def show_write_warning():
-    print("")
-    print(YELLOW +
-          "WARNING: " +
-          NOCOLOR +
-          "You have selected to perform a write test. This will delete all the data " +
-          "on the drives.")
-    print("")
-    print("")
-    run_this = raw_input("Answer 'I WANT TO LOSE MY DATA' to continue, any other text " +
-                        "will terminate this program: ")
-    if run_this == 'I WANT TO LOSE MY DATA':
-        print("")
-        return True
-    else:
-        print(GREEN +
-            "INFO: " +
-            NOCOLOR +
-            "You have not accepted to lose your data. We stop at this point.")
-        sys.exit("Have a nice day! Bye.\n")
-
-
-def estimate_runtime(fio_runtime, drives_dictionary, bs_list, patterns_list):
-    n_drives = len(drives_dictionary)
-    n_patterns = len(patterns_list)
-    n_blocks = len(bs_list)
-    HDD_drives = []
-    SSD_drives = []
-    NVME_drives = []
-    parallel_tests = []
-    for device in drives_dictionary.keys():
-        if drives_dictionary[device] == "HDD":
-            HDD_drives.append(device)
-        elif drives_dictionary[device] == "SSD":
-            SSD_drives.append(device)
-        elif drives_dictionary[device] == "NVME":
-            NVME_drives.append(device)
-    if len(HDD_drives) > 1:
-        n_drives = n_drives + 1
-    if len(SSD_drives) > 1:
-        n_drives = n_drives + 1
-    if len(NVME_drives) > 1:
-        n_drives = n_drives + 1
-
-    estimated_rt_fio = n_drives * n_patterns * n_blocks * fio_runtime
-    estimated_ramp_time = n_drives * n_patterns * n_blocks * 10
-    estimated_runtime = estimated_rt_fio + estimated_ramp_time
-    estimated_runtime_minutes = int(ceil(estimated_runtime / 60.))
-    return estimated_runtime_minutes
-
-
-def show_header(json_version, estimated_runtime_str, fio_runtime, drives_dictionary, bs_list, patterns_list):
-    # Say hello and give chance to disagree
-    while True:
-        print("")
-        print(GREEN +
-              "Welcome to NOPEUS, version " +
-              str(NOPEUS_VERSION) +
-              NOCOLOR)
-        print("")
-        print("JSON files versions:")
-        print("\tsupported OS:\t\t" + json_version['supported_OS'])
-        print("\tpackages: \t\t" + json_version['packages'])
-        print("")
-        print("Please use " + GIT_URL +
-              " to get latest versions and report issues about this tool.")
-        print("")
-        print(
-            "The purpose of NOPEUS is to obtain drive metrics, " +
-            "and compare them against KPIs")
-        print("")
-        if fio_runtime >= FIO_RUNTIME:
-            print(GREEN + "The FIO runtime per test of " + str(fio_runtime) +
-                  " seconds is sufficient to certify the environment" + NOCOLOR)
-        else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The FIO runtime per test of " + str(fio_runtime) +
-                " seconds is not sufficient to certify the environment")
-        print("")
-        if "128k" in bs_list:
-            print(GREEN + "The FIO blocksize of 128k is valid " +
-                  "to certify the environment" + NOCOLOR)
-        else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The FIO blocksize " +
-                "is not valid to certify the environment")
-        print("")
-        if "randread" in patterns_list:
-            print(GREEN + "The FIO patterns of randread is valid " +
-                  "to certify the environment" + NOCOLOR)
-        else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The FIO pattern " +
-                "is not valid to certify the environment")
-        print("")
-        print(YELLOW + "This test run estimation is " +
-              estimated_runtime_str + " minutes" + NOCOLOR)
-        print("")
-        print(
-            RED +
-            "This software comes with absolutely no warranty of any kind. " +
-            "Use it at your own risk" +
-            NOCOLOR)
-        print("")
-        print(
-            RED +
-            "NOTE: The bandwidth and latency numbers shown in this tool " +
-            "are for a very specific test. " +
-            "This is not a generic storage benchmark." +
-            NOCOLOR)
-        print(
-            RED +
-            "The numbers do not reflect the numbers you would see with " +
-            "IBM Storage Scale and your particular workload" +
-            NOCOLOR)
-        print("")
-        print_drives(drives_dictionary)
-        run_this = raw_input("Do you want to continue? (y/n): ")
-        if run_this.lower() == 'y':
-            break
-        if run_this.lower() == 'n':
-            print
-            sys.exit("Have a nice day! Bye.\n")
-    print("")
-
-
-def load_fio_tests(drives_dictionary, logdir, bs_list, patterns_list, write_accepted):
-    fio_json_test_key_l = []
-    fio_iops_d = {}
-    fio_iops_min_d = {}
-    fio_iops_mean_d = {}
-    fio_iops_stddev_d = {}
-    fio_iops_drop_d = {}
-    fio_lat_min_d = {}
-    fio_lat_mean_d = {}
-    fio_lat_stddev_d = {}
-    fio_lat_max_d = {}
-
-    for pattern in patterns_list:
-        if write_accepted:
-            pattern_key = "write"
-        else:
-            pattern_key = "read"
-        for blocksize in bs_list:
-            for device in drives_dictionary.keys():
-                test_key = device + "_" + pattern + "_" + blocksize
-                fio_json = str(logdir+ "/" + test_key + ".json")
-                #fio_IOPS_d[device] = fio_json[]
-                test_load = load_json(fio_json)
-                #IOPS
-                iops = test_load["jobs"][0][pattern_key]["iops"]
-                iops = "%.2f" % iops
-                iops_min = test_load["jobs"][0][pattern_key]["iops_min"]
-                iops_mean = test_load["jobs"][0][pattern_key]["iops_mean"]
-                iops_stddev = test_load["jobs"][0][pattern_key]["iops_stddev"]
-                iops_drop = test_load["jobs"][0][pattern_key]["drop_ios"]
-                fio_iops_d[test_key] = float("%.2f" % float(iops))
-                fio_iops_min_d[test_key] = float(iops_min)
-                fio_iops_mean_d[test_key] = float("%.2f" % float(iops_mean))
-                fio_iops_stddev_d[test_key] = float("%.2f" % float(iops_stddev))
-                fio_iops_drop_d[test_key] = float(iops_drop)
-                #LATENCY
-                lat_min = test_load["jobs"][0][pattern_key]["clat_ns"]["min"]/1000000
-                lat_mean = test_load["jobs"][0][pattern_key]["clat_ns"]["mean"]/1000000
-                lat_stddev = test_load["jobs"][0][pattern_key]["clat_ns"]["stddev"]/1000000
-                lat_max = test_load["jobs"][0][pattern_key]["clat_ns"]["max"]/1000000
-                fio_lat_min_d[test_key] = float(lat_min)
-                fio_lat_mean_d[test_key] = float("%.2f" % float(lat_mean))
-                fio_lat_stddev_d[test_key] = float("%.2f" % float(lat_stddev))
-                fio_lat_max_d[test_key] = float(lat_max)
-                #Append test_key
-                fio_json_test_key_l.append(test_key)
-
-    return (fio_json_test_key_l, fio_iops_d, fio_iops_min_d, fio_iops_mean_d,
-            fio_iops_stddev_d, fio_iops_drop_d, fio_lat_min_d, fio_lat_mean_d,
-            fio_lat_stddev_d, fio_lat_max_d)
-
-
-def load_fio_parallel_tests(drives_dictionary, logdir, parallel_tests, bs_list, patterns_list, write_accepted):
-    fio_json_test_key_l = []
-    fio_iops_d = {}
-    fio_iops_min_d = {}
-    fio_iops_mean_d = {}
-    fio_iops_stddev_d = {}
-    fio_iops_drop_d = {}
-    fio_lat_min_d = {}
-    fio_lat_mean_d = {}
-    fio_lat_stddev_d = {}
-    fio_lat_max_d = {}
-
-    for pattern in patterns_list:
-        if write_accepted:
-            pattern_key = "write"
-        else:
-            pattern_key = "read"
-        for blocksize in bs_list:
-            for device in parallel_tests:
-                test_key = device + "_" + pattern + "_" + blocksize
-                fio_json = str(logdir+ "/" + test_key + ".json")
-                #fio_IOPS_d[device] = fio_json[]
-                test_load = load_json(fio_json)
-                #IOPS
-                iops = test_load["jobs"][0][pattern_key]["iops"]
-                iops = "%.2f" % iops
-                iops_min = test_load["jobs"][0][pattern_key]["iops_min"]
-                iops_mean = test_load["jobs"][0][pattern_key]["iops_mean"]
-                iops_stddev = test_load["jobs"][0][pattern_key]["iops_stddev"]
-                iops_drop = test_load["jobs"][0][pattern_key]["drop_ios"]
-                fio_iops_d[test_key] = float("%.2f" % float(iops))
-                fio_iops_min_d[test_key] = float(iops_min)
-                fio_iops_mean_d[test_key] = float("%.2f" % float(iops_mean))
-                fio_iops_stddev_d[test_key] = float("%.2f" % float(iops_stddev))
-                fio_iops_drop_d[test_key] = float(iops_drop)
-                #LATENCY
-                lat_min = test_load["jobs"][0][pattern_key]["clat_ns"]["min"]/1000000
-                lat_mean = test_load["jobs"][0][pattern_key]["clat_ns"]["mean"]/1000000
-                lat_stddev = test_load["jobs"][0][pattern_key]["clat_ns"]["stddev"]/1000000
-                lat_max = test_load["jobs"][0][pattern_key]["clat_ns"]["max"]/1000000
-                fio_lat_min_d[test_key] = float(lat_min)
-                fio_lat_mean_d[test_key] = float("%.2f" % float(lat_mean))
-                fio_lat_stddev_d[test_key] = float("%.2f" % float(lat_stddev))
-                fio_lat_max_d[test_key] = float(lat_max)
-                #Append test_key
-                fio_json_test_key_l.append(test_key)
-
-    return (fio_json_test_key_l, fio_iops_d, fio_iops_min_d, fio_iops_mean_d,
-            fio_iops_stddev_d, fio_iops_drop_d, fio_lat_min_d, fio_lat_mean_d,
-            fio_lat_stddev_d, fio_lat_max_d)
-
-
-def parallel_tests_print(pfio_json_test_key_l, pfio_iops_d, pfio_iops_min_d, pfio_iops_mean_d, \
-    pfio_iops_stddev_d, pfio_iops_drop_d, pfio_lat_min_d, pfio_lat_mean_d, \
-    pfio_lat_stddev_d, pfio_lat_max_d):
-    fatal_error = 0
-    for test in pfio_iops_mean_d.keys():
-        print(
-            GREEN +
-            "INFO: " +
-            NOCOLOR +
-            "test " +
-            test +
-            " has mean IOPS of " +
-            str(pfio_iops_mean_d[test])
-        )
-    for test in pfio_lat_mean_d.keys():
-        print(
-            GREEN +
-            "INFO: " +
-            NOCOLOR +
-            "test " +
-            test +
-            " has mean latency of " +
-            str(pfio_lat_mean_d[test]) +
-            " msec"
-        )
-    for test in pfio_iops_drop_d.keys():
-        if pfio_iops_drop_d[test] == 0:
-            print(
-                GREEN +
-                "INFO: " +
-                NOCOLOR +
-                "test " +
-                test +
-                " has IOPS drop of " +
-                str(pfio_iops_drop_d[test])
-            )
-        else:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                "test " +
-                test +
-                " has IOPS drop of " +
-                str(pfio_iops_drop_d[test])
-            )
-            fatal_error = fatal_error + 1
-    return fatal_error
-
-
-def compare_against_kpis(drives_dictionary, fio_json_test_key_l,
-                         fio_iops_min_d, fio_iops_drop_d, fio_lat_max_d,
-                         fio_iops_mean_d, fio_lat_mean_d):
-    errors = 0
-    #Each drive to the KPI type
-    for drive in drives_dictionary.keys():
-        for test_key in fio_json_test_key_l:
-            if drive in test_key:
-                if fio_iops_drop_d[test_key] == 0:
-                    print(
-                        GREEN +
-                        "OK: " +
-                        NOCOLOR +
-                        "drive " +
-                        drive +
-                        " with IO drop[s] of " +
-                        str(fio_iops_drop_d[test_key]) +
-                        " passes the IO drops KPI of 0" +
-                        " for test " +
-                        str(test_key))
-                else:
-                    print(
-                        RED +
-                        "ERROR: " +
-                        NOCOLOR +
-                        "drive " +
-                        drive +
-                        " with IO drop[s] of " +
-                        str(fio_iops_drop_d[test_key]) +
-                        " does not pass the IO drops KPI of 0" +
-                        " for test " +
-                        str(test_key))
-
-                if drives_dictionary[drive].upper() == "HDD":
-                    if fio_iops_min_d[test_key] >= MIN_IOPS_HDD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with minimum IOPS of " +
-                            str(fio_iops_min_d[test_key]) +
-                            " passes the HDD IOPS KPI of " +
-                            str(MIN_IOPS_HDD) +
-                            " for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with minimum IOPS of " +
-                            str(fio_iops_min_d[test_key]) +
-                            " does not pass the HDD IOPS KPI of " +
-                            str(MIN_IOPS_HDD) +
-                            " for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_lat_max_d[test_key] <= MAX_LATENCY_HDD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with maximum latency of " +
-                            str(fio_lat_max_d[test_key]) +
-                            " msec passes the HDD latency KPI of " +
-                            str(MAX_LATENCY_HDD) +
-                            " msec for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with maximum latency of " +
-                            str(fio_lat_max_d[test_key]) +
-                            " msec does not pass the HDD latency KPI of " +
-                            str(MAX_LATENCY_HDD) +
-                            " msec for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_iops_mean_d[test_key] >= MEAN_IOPS_HDD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean IOPS of " +
-                            str(fio_iops_mean_d[test_key]) +
-                            " passes the HDD IOPS KPI of " +
-                            str(MEAN_IOPS_HDD) +
-                            " for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean IOPS of " +
-                            str(fio_iops_mean_d[test_key]) +
-                            " does not pass the HDD IOPS KPI of " +
-                            str(MEAN_IOPS_HDD) +
-                            " for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_lat_mean_d[test_key] <= MEAN_LATENCY_HDD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean latency of " +
-                            str(fio_lat_mean_d[test_key]) +
-                            " msec passes the HDD latency KPI of " +
-                            str(MEAN_LATENCY_HDD) +
-                            " msec for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean latency of " +
-                            str(fio_lat_mean_d[test_key]) +
-                            " msec does not pass the HDD latency KPI of " +
-                            str(MEAN_LATENCY_HDD) +
-                            " msec for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                if drives_dictionary[drive].upper() == "SSD":
-                    if fio_iops_min_d[test_key] >= MIN_IOPS_SSD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with minimum IOPS of " +
-                            str(fio_iops_min_d[test_key]) +
-                            " passes the SSD IOPS KPI of " +
-                            str(MIN_IOPS_SSD) +
-                            " for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with minimum IOPS of " +
-                            str(fio_iops_min_d[test_key]) +
-                            " does not pass the SSD IOPS KPI of " +
-                            str(MIN_IOPS_SSD) +
-                            " for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_lat_max_d[test_key] <= MAX_LATENCY_SSD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with maximum latency of " +
-                            str(fio_lat_max_d[test_key]) +
-                            " msec passes the SSD latency KPI of " +
-                            str(MAX_LATENCY_SSD) +
-                            " msec for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with maximum latency of " +
-                            str(fio_lat_max_d[test_key]) +
-                            " msec does not pass the SSD latency KPI of " +
-                            str(MAX_LATENCY_SSD) +
-                            " msec for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_iops_mean_d[test_key] >= MEAN_IOPS_SSD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean IOPS of " +
-                            str(fio_iops_mean_d[test_key]) +
-                            " passes the SSD IOPS KPI of " +
-                            str(MEAN_IOPS_SSD) +
-                            " for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean IOPS of " +
-                            str(fio_iops_mean_d[test_key]) +
-                            " does not pass the SSD IOPS KPI of " +
-                            str(MEAN_IOPS_SSD) +
-                            " for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_lat_mean_d[test_key] <= MEAN_LATENCY_SSD:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean latency of " +
-                            str(fio_lat_mean_d[test_key]) +
-                            " msec passes the SSD latency KPI of " +
-                            str(MEAN_LATENCY_SSD) +
-                            " msec for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean latency of " +
-                            str(fio_lat_mean_d[test_key]) +
-                            " msec does not pass the SSD latency KPI of " +
-                            str(MEAN_LATENCY_SSD) +
-                            " msec for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                if drives_dictionary[drive].upper() == "NVME":
-                    if fio_iops_min_d[test_key] >= MIN_IOPS_NVME:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with minimum IOPS of " +
-                            str(fio_iops_min_d[test_key]) +
-                            " passes the NVME IOPS KPI of " +
-                            str(MIN_IOPS_NVME) +
-                            " for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with minimum IOPS of " +
-                            str(fio_iops_min_d[test_key]) +
-                            " does not pass the NVME IOPS KPI of " +
-                            str(MIN_IOPS_NVME) +
-                            " for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_lat_max_d[test_key] <= MAX_LATENCY_NVME:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with maximum latency of " +
-                            str(fio_lat_max_d[test_key]) +
-                            " msec passes the NVME latency KPI of " +
-                            str(MAX_LATENCY_NVME) +
-                            " msec for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with maximum latency of " +
-                            str(fio_lat_max_d[test_key]) +
-                            " msec does not pass the NVME latency KPI of " +
-                            str(MAX_LATENCY_NVME) +
-                            " msec for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_iops_mean_d[test_key] >= MEAN_IOPS_NVME:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean IOPS of " +
-                            str(fio_iops_mean_d[test_key]) +
-                            " passes the NVME IOPS KPI of " +
-                            str(MEAN_IOPS_NVME) +
-                            " for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean IOPS of " +
-                            str(fio_iops_mean_d[test_key]) +
-                            " does not pass the NVME IOPS KPI of " +
-                            str(MEAN_IOPS_NVME) +
-                            " for test " +
-                            str(test_key))
-                        errors = errors + 1
-
-                    if fio_lat_mean_d[test_key] <= MEAN_LATENCY_NVME:
-                        print(
-                            GREEN +
-                            "OK: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean latency of " +
-                            str(fio_lat_mean_d[test_key]) +
-                            " msec passes the NVME latency KPI of " +
-                            str(MEAN_LATENCY_NVME) +
-                            " msec for test " +
-                            str(test_key))
-                    else:
-                        print(
-                            RED +
-                            "ERROR: " +
-                            NOCOLOR +
-                            "drive " +
-                            drive +
-                            " with mean latency of " +
-                            str(fio_lat_mean_d[test_key]) +
-                            " msec does not pass the NVME latency KPI of " +
-                            str(MEAN_LATENCY_NVME) +
-                            " msec for test " +
-                            str(test_key))
-                        errors = errors + 1
-    return errors
-
-
-def pct_diff_list(list):
-    #Expect floats
-    if len(list) < 2:
-        return 0
+    """
+    Params:
+    Returns:
+        0 if succeeded.
+        Exit directly if hit error or data corruption is not allowed.
+    """
+    print('')
+    print("{}Random write I/O type was enabled. It will ".format(WARN) +
+          "corrupt data on storage devices")
+    print("{}For above devices, double check if Operation ".format(WARN) +
+          "System was NOT installed on")
+    print("{}For above devices, double check if user data ".format(WARN) +
+          "has been backed up")
+    print('')
+    print("{}Type 'I CONFIRM' to allow data on storage ".format(RED) +
+          "devices to be corrupted. Otherwise, exit{}".format(RESETCOLOR))
     try:
-        pc_diff = abs(min(list) * 100 / (max(list)) - 100)
-    except BaseException:
-        sys.exit(
-            RED +
-            "QUIT: " +
-            NOCOLOR +
-            "cannot calculate percentage\n")
-    pc_diff = float("%.2f" % float(pc_diff))
-    return pc_diff
+        choice = input('Confirm? <I CONFIRM>: ')
+    except KeyboardInterrupt as e:
+        sys.exit("\n{0}Hit KeyboardInterrupt. Bye!\n".format(QUIT))
+    if choice == 'I CONFIRM':
+        print('')
+        print("{}Type 'I CONFIRM' again to ensure you ".format(RED) +
+              "allow data to be corrupted. Otherwise, exit{}".format(
+              RESETCOLOR))
+        try:
+            second_choice = input('Confirm? <I CONFIRM>: ')
+        except KeyboardInterrupt as e:
+            sys.exit("\n{0}Hit KeyboardInterrupt. Bye!\n".format(QUIT))
+        if second_choice == 'I CONFIRM':
+            print('')
+            return 0
+        else:
+            sys.exit("{}Leave the data as it is. Bye!\n".format(QUIT))
+    else:
+        sys.exit("{}Leave the data as it is. Bye!\n".format(QUIT))
 
 
-def compare_peers(drives_dictionary,
-                  fio_json_test_key_l,
-                  fio_iops_mean_d,
-                  fio_lat_mean_d,
-                  drive_type):
-    # We compare mean against all peers to see a % difference
-    list_iops = []
-    list_lat = []
-    errors = 0
-    for drive in drives_dictionary.keys():
-        for test_key in fio_json_test_key_l:
-            if drive in test_key:
-                if drives_dictionary[drive].upper() == drive_type:
-                    list_iops.append(fio_iops_mean_d[test_key])
-                    list_lat.append(fio_lat_mean_d[test_key])
+def parse_arguments():
+    """
+    Params:
+    Returns:
+        {'guess_devices': bool, 'blocksize': str, 'numjobs': int,
+         'runtime': int, 'io_type': str, 'skip_pkg_check': bool,
+         'is_valid': str} if succeeded.
+        {} if hit error.
+    """
+    parser = argparse.ArgumentParser()
 
-    if len(list_iops) == 0:
-        print(
-            GREEN +
-            "INFO: " +
-            NOCOLOR +
-            "drive type " +
-            str(drive_type) +
-            " was not tested, so no percentage difference applies for test " +
-            str(test_key))
+    parser.add_argument(
+        "-g", "--guess-devices",
+        action="store_true",
+        dest="guess_devices",
+        help="guess the storage devices then overwrite them to " +
+             "{0}. It is recommended to review {0}".format(
+             os.path.basename(STORDEV_FL)) +
+             " before starting storage readiness testing",
+        default=False)
+
+    parser.add_argument(
+        "-b", "--block-size",
+        action="store",
+        dest="block_size",
+        help="block size in bytes used for fio I/O units. " +
+             "The default I/O block size is {} ".format(DEFAULT_BS) +
+             "which is also for certification",
+        #metavar="BLOCKSIZE",
+        type=str.lower,
+        choices=BS_CHOICES,
+        default=DEFAULT_BS)
+
+    parser.add_argument(
+        "-j", "--job-per-device",
+        action="store",
+        dest="job_number",
+        help="fio job number for each deivce. For certification, " +
+             "it must be {}. This tool implies the 16 I/O ".format(
+             DEFAULT_NJ) + "queue depth for each fio instance",
+        metavar="JOBNUM",
+        type=int,
+        default=DEFAULT_NJ)
+
+    parser.add_argument(
+        "-t", "--runtime-per-instance",
+        action="store",
+        dest="fio_runtime",
+        help="runtime in second for each fio instance. It should " +
+             "be at least 30 sec even if ran quick testing. " +
+             "For certification, it must be at least {0} ".format(
+             DEFAULT_RT) + "sec",
+        metavar="RUNTIME",
+        type=int,
+        default=DEFAULT_RT)
+
+    parser.add_argument(
+        "-w", "--random-write",
+        action="store_true",
+        dest="randwrite",
+        help="use randwrite option to start fio instance instead of " +
+             "randread. This would corrupt data that stored in the " +
+             "storage devices. Ensure the original data on storage " +
+             "devices has been backed up or could be corrupted " +
+             "before specified this option",
+        default=False)
+
+    parser.add_argument(
+        "-v", "--version",
+        action="version",
+        version="Storage readiness {0}".format(VERSION))
+
+    args = parser.parse_args()
+
+    if args.fio_runtime < 30:
+        print("{0}The specified {1} (< 30 sec) fio runtime ".format(ERRO,
+              args.fio_runtime) + "is too short. Try a longer one")
+        return {}
+
+    ret_kv = {}
+    ret_kv['guess_devices'] = args.guess_devices
+    ret_kv['blocksize'] = args.block_size
+    ret_kv['numjobs'] = args.job_number
+    ret_kv['runtime'] = args.fio_runtime
+    if args.randwrite is True:
+        ret_kv['io_type'] = 'randwrite'
+    else:
+        ret_kv['io_type'] = 'randread'
+
+    # KPIs are sized for randread 128k so we mark valid test OK for those only
+    if args.block_size == '128k' and \
+        args.fio_runtime >= int(DEFAULT_RT) and \
+        args.job_number == int(DEFAULT_NJ) and \
+        args.randwrite is False:
+        ret_kv['is_valid'] = 'yes'
+    else:
+        ret_kv['is_valid'] = 'no'
+
+    return ret_kv
+
+
+def show_header():
+    """
+    Params:
+    Returns:
+        0 if succeeded.
+    """
+    print('')
+    print("{0}Welcome to storage readiness tool, version ".format(GREEN) +
+          "{0}{1}".format(VERSION, RESETCOLOR))
+    print('')
+    print("Please access {0} to get the latest version ".format(GIT_URL) +
+          "or report issue(s)")
+    print('')
+    print("The purpose of this tool is to obtain drive metrics, then " +
+          "compare them against certain KPIs")
+    print('')
+    print("{0}NOTE: This software absolutely comes with no ".format(RED) +
+          "warranty of any kind. Use it at your own risk.{0}".format(RESETCOLOR))
+    print("{0}      The IOPS and latency numbers shown are ".format(RED) +
+          "under special parameters. That is not a generic storage " +
+          "standard.{0}".format(RESETCOLOR))
+    print("{0}      The numbers do not reflect any specification ".format(RED) +
+          "of IBM Storage Scale or any performance number of user's " +
+          "workload.{0}".format(RESETCOLOR))
+    print('')
+    return 0
+
+class StorageReadiness():
+    """
+    A class to do storage readiness testing.
+    """
+    def __init__(self, kvs):
+        """
+        Params:
+            kvs: a series of key-value pairs.
+                Like: {
+                'guess_devices': bool, 'blocksize': str,
+                'numjobs': int, 'runtime': int, 'io_type': str,
+                'skip_pkg_check': bool, 'is_valid': str}
+        Returns:
+            None.
+            Exit if hit error.
+        """
+        if not kvs or isinstance(kvs, dict) is False:
+            sys.exit("{}Invalid parameter: kvs".format(QUIT))
+        try:
+            guess_dev = kvs['guess_devices']
+            runtime = kvs['runtime']
+            io_type = kvs['io_type']
+            blocksize = kvs['blocksize']
+            numjobs = kvs['numjobs']
+            is_valid = kvs['is_valid']
+        except KeyError as e:
+            sys.exit("{0}Tried to extract values from parameter ".format(QUIT) +
+                     "but hit KeyError: {0}\n".format(e))
+        # Thresholds
+        self.__min_runtime = 300
+        self.__min_iodepth = 16
+        # Default fio options
+        self.__invalidate = 1
+        self.__engine = 'libaio'
+        self.__ramp_time = 10
+        self.__dir_buf = '-direct=1'
+        # Comment out default io_size, it is too small
+        #self.__io_size = 268435456
+        self.__offset = 4802187264
+        self.__output_format = 'json'
+        self.__stordevfile = STORDEV_FL
+        self.__kpifile = os.path.join(BASEDIR, 'randread_128KiB_16iodepth_KPIs.json')
+        timestr = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        log_dir = os.path.join(BASEDIR, 'log', timestr)
+        self.logdir = log_dir
+
+        init_stor_devs = {}
+        init_stor_devs['HDD'] = []
+        init_stor_devs['SSD'] = []
+        init_stor_devs['NVME'] = []
+        init_stor_devs['ALL'] = []
+        self._stor_devs = init_stor_devs
+        self._kpis = {}
+        self._guessdev = guess_dev
+        self._runtime = runtime
+        self.iotype = io_type
+        self._blocksize = blocksize
+        self._job_per_dev = numjobs
+        self._isvalid = is_valid
+        self._sing_perf = {}
+        self._mult_perf = {}
+
+    def initialize_storage_devices(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+        """
+        dev_kv = {}
+        if self._guessdev is True:
+            dev_kv = guess_storage_devices()
+            if not dev_kv:
+                return 1
+            if os.access(self.__stordevfile, os.W_OK) is False:
+                print("{0}{1} does not have write permission".format(ERRO,
+                      self.__stordevfile))
+                return 1
+            rc = dump_json(dev_kv, self.__stordevfile)
+            if rc != 0:
+                return 1
+        else:
+            print("{0}Extract storage device(s) from {1}".format(INFO,
+                  os.path.basename(self.__stordevfile)))
+            rc = is_file_readable(self.__stordevfile)
+            if rc != 'yes':
+                return 1
+            dev_kv = load_json(self.__stordevfile)
+            if dev_kv is None:
+                return 1
+        if not dev_kv:
+            print("{0}Failed to load storage devices from {1}".format(ERRO,
+                  self.__stordevfile))
+            return 1
+        print('')
+        print("{0}Got below storage devices to be tested".format(INFO))
+        hdds = []
+        ssds = []
+        nvms = []
+        alldevs = []
+        blk_count = 0
+        none_blk_count = 0
+        for dev, dev_type in dev_kv.items():
+            devtype = dev_type.upper()
+            if devtype not in ('HDD', 'SSD', 'NVME'):
+                print("{0}{1} device type does not supported. ".format(ERRO,
+                      dev_type))
+                print("{0}Please re-write {1} refer to template".format(ERRO,
+                      self.__stordevfile))
+                return 1
+            try:
+                isblk = S_ISBLK(os.stat(dev).st_mode)
+            except FileNotFoundError as e:
+                print("{0}Tried to get block info of {1} but ".format(ERRO, dev) +
+                      "hit FileNotFoundError: {}".format(e))
+                print("{0}Please review then modify {1}".format(ERRO,
+                      self.__stordevfile))
+                return 1
+            if isblk is True:
+                print("{0}{1} {2} is a block device".format(INFO, dev_type, dev))
+                blk_count += 1
+                if devtype == 'HDD':
+                    hdds.append(dev)
+                elif devtype == 'SSD':
+                    ssds.append(dev)
+                elif devtype == 'NVME':
+                    nvms.append(dev)
+                alldevs.append(dev)
+            else:
+                print("{0}{1} {2} is NOT a block device".format(INFO, dev_type, dev))
+                none_blk_count += 1
+        if none_blk_count > 0 or blk_count == 0:
+            print("{}None block device found. Please check device(s) ".format(ERRO) +
+                  "in {}".format(self.__stordevfile))
+            return 1
+        elif blk_count == 1:
+            print("{0}Above storage device is block device".format(INFO))
+        else:
+            print("{0}Above storage devices are all block devices".format(INFO))
+        print('')
+        if hdds:
+            self._stor_devs['HDD'] = hdds
+        if ssds:
+            self._stor_devs['SSD'] = ssds
+        if nvms:
+            self._stor_devs['NVME'] = nvms
+        if alldevs:
+            self._stor_devs['ALL'] = alldevs
+        if not self._stor_devs:
+            print("{0}Failed to initialize storage devices".format(ERRO))
+            return 1
         return 0
 
-    if len(list_iops) == 1:
-        print(
-            GREEN +
-            "INFO: " +
-            NOCOLOR +
-            "drive type " +
-            str(drive_type) +
-            " has only one drive, so no percentage difference applies for test " +
-            str(test_key))
+    def initialize_KPIs(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+        """
+        rc = is_file_readable(self.__kpifile)
+        if rc != 'yes':
+            print("{0}Invalid file to describe certification ".format(ERRO) +
+                  "KPIs is required")
+            return 1
+        kpi_kv = load_json(self.__kpifile)
+        if kpi_kv is None:
+            print("{0}Failed to load KPIs from {1}".format(ERRO, self.__kpifile))
+            return 1
+        print("{0}Extracted KPIs from {1} with version {2}".format(INFO,
+              os.path.basename(self.__kpifile), kpi_kv['json_version']))
+        self._kpis = kpi_kv
         return 0
 
-    iops_pct_diff = pct_diff_list(list_iops)
-    lat_pct_diff = pct_diff_list(list_lat)
-    if iops_pct_diff <= MAX_PCT_DIFF:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "drive type " +
-            str(drive_type) +
-            " has IOPS percentage difference of " +
-            str(iops_pct_diff) +
-            "% which passes the KPI of " +
-            str(MAX_PCT_DIFF) +
-            "% for IOPS difference for same drive type for test " +
-            str(test_key))
-    else:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                "drive type " +
-                str(drive_type) +
-                " has IOPS percentage difference of " +
-                str(iops_pct_diff) +
-                "% which does not pass the KPI of " +
-                str(MAX_PCT_DIFF) +
-                "% for IOPS difference for same drive type for test " +
-                str(test_key))
-            errors = errors + 1
+    def estimate_time_consumption(self):
+        """
+        Params:
+        Returns:
+            Total time consumption in minute estimated for all testings.
+            -1 if hit error.
+        """
+        try:
+            hdds = self._stor_devs['HDD']
+            ssds = self._stor_devs['SSD']
+            nvms = self._stor_devs['NVME']
+        except KeyError:
+            pass
+        hdd_num = len(hdds)
+        ssd_num = len(ssds)
+        nvme_num = len(nvms)
+        instance_num = hdd_num + ssd_num + nvme_num
+        if instance_num <= 0:
+            print("{}Failed to estimate time. It seems no storage ".format(ERRO) +
+                  "device to be tested")
+            return -1
+        if hdd_num > 1:
+            instance_num += 1
+        if ssd_num > 1:
+            instance_num += 1
+        if nvme_num > 1:
+            instance_num += 1
 
-    if lat_pct_diff <= MAX_PCT_DIFF:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "drive type " +
-            str(drive_type) +
-            " has latency percentage difference of " +
-            str(lat_pct_diff) +
-            "% which passes the KPI of " +
-            str(MAX_PCT_DIFF) +
-            "% for latency difference for same drive type for test " +
-            str(test_key))
-    else:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                "drive type " +
-                str(drive_type) +
-                " has latency percentage difference of " +
-                str(lat_pct_diff) +
-                "% which does not pass the KPI of " +
-                str(MAX_PCT_DIFF) +
-                "% for latency difference for same drive type for test " +
-                str(test_key))
-            errors = errors + 1
-    return errors
+        total_runtime = instance_num * self._runtime
+        total_ramptime = instance_num * self.__ramp_time
+        total_instancetime = total_runtime + total_ramptime
+        total_instance_minutes = int(ceil(total_instancetime / 60.))
+        if total_instance_minutes <= 0:
+            print("{}It seems the runtime is too short to estimate ".format(ERRO) +
+                  "total time consumption")
+            return -1
+        return total_instance_minutes
 
-
-def print_summary(valid_test, kpi_errors_int):
-    print("")
-    print("Summary of this run:")
-    if valid_test:
-        if kpi_errors_int == 0:
-            print(GREEN +
-                  "\tSUCCESS: " +
-                  NOCOLOR +
-                  "All drives fulfill the KPIs. You can continue with the next steps")
+    def check_arguments(self, estimated_time):
+        """
+        Params:
+            estimated_time: time in miniute.
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+            Exit if type 'no'
+        """
+        if not estimated_time or isinstance(estimated_time, int) is False:
+            print("{}Invalid parameter: estimated_time".format(ERRO))
+            return 1
+        if self._runtime >= self.__min_runtime:
+            print("{0}The {1} sec runtime per fio instance is ".format(INFO,
+                  self._runtime) + "sufficient to do storage certification")
         else:
-            print(RED +
-                  "\tFAILURE: " +
-                  NOCOLOR +
-                  "All drives do not fulfill the KPIs. You *cannot* continue with the next steps")
-    else:
-        if kpi_errors_int == 0:
-            print(YELLOW +
-                  "\tFAILURE: " +
-                  NOCOLOR +
-                  "All drives fulfill the KPIs. However you *cannot* continue with the next steps")
-        else:
-            print(RED +
-                  "\tFAILURE: " +
-                  NOCOLOR +
-                  "All drives do not fulfill the KPIs. You *cannot* continue with the next steps")
-        print(RED +
-              "\tERROR: " +
-              NOCOLOR +
-              "The settings of this test run do not qualify as a valid run to check their KPIs. You *cannot* continue with the next steps")
+            print("{0}The {1} sec runtime per fio instance is ".format(WARN,
+                  self._runtime) + "not sufficient to certify storage " +
+                  "devices")
 
-    print("")
+        if self._blocksize.lower() == '128k':
+            print("{}The 128KiB blocksize for each I/O unit is ".format(INFO) +
+                  "valid to do storage certification")
+        else:
+            print("{0}The {1} blocksize for each I/O unit is ".format(WARN,
+                  self._blocksize) + "invalid to certify storage devices")
+
+        if self._job_per_dev == 1:
+            print("{}The 1 fio job number for each storage ".format(INFO) +
+                  "device is valid to do storage certification")
+        else:
+            print("{0}The {1} fio job number for storage device(s) ".format(WARN,
+                  self._job_per_dev) + "is invalid to certify storage devices")
+
+        if self.iotype == 'randread':
+            print("{0}The {1} I/O type is valid to do storage ".format(INFO,
+                  self.iotype) + "certification")
+        else:
+            print("{0}The {1} I/O type is invalid ".format(WARN, self.iotype) +
+                  "to certify storage devices")
+
+        print("{}The total time consumption of running this ".format(INFO) +
+              "storage readiness instance is estimated to take " +
+              "{0}~{1} minutes{2}".format(PURPLE, estimated_time, RESETCOLOR))
+
+        print("{}Please check above messages, especially the ".format(INFO) +
+              "storage devices to be tested")
+        print("Type 'yes' to continue testing, 'no' to stop")
+        while True:
+            try:
+                original_choice = input('Continue? <yes|no>: ')
+            except KeyboardInterrupt as e:
+                sys.exit("\n{0}Hit KeyboardInterrupt. Bye!\n".format(QUIT))
+            if not original_choice:
+                print("{}Pressing the Enter key does not supported. ".format(RED) +
+                      "Please explicitly type 'yes' or 'no'{}".format(RESETCOLOR))
+                continue
+            choice = original_choice.lower()
+            if choice == 'yes':
+                print('')
+                return 0
+            elif choice == 'no':
+                sys.exit("{0}Your choice is '{1}'. Bye!\n".format(QUIT,
+                         original_choice))
+            else:
+                print("{0}Your choice is '{1}'. ".format(RED, original_choice) +
+                      " Type 'yes' to continue, 'no' to stop{}".format(RESETCOLOR))
+                continue
+        print('')
+        return 0
+
+    def run_fio_instance(self, dev_to_test, remark):
+        """
+        Params:
+            dev_to_test: storage devices to be tested.
+            remark: comment for this fio instance.
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+        """
+        rc = 0
+        if not dev_to_test or isinstance(dev_to_test, str) is False:
+            print("{0}Invalid parameter: dev_to_test".format(ERRO))
+            rc = 1
+        if not remark or isinstance(remark, str) is False:
+            print("{0}Invalid parameter: remark".format(ERRO))
+            rc = 1
+        dev_to_test = dev_to_test.strip()
+        if '/dev/' not in dev_to_test or ' ' in dev_to_test:
+            print("{0}Device in parameter dev_to_test is invalid".format(ERRO))
+            rc = 1
+        if rc != 0:
+            return rc
+
+        raw_devs = dev_to_test.split(':')
+        # Remove the null character element
+        devs = [x for x in raw_devs if x]
+        dev_num = len(devs)
+        numjobs = self._job_per_dev * dev_num
+
+        if remark.upper() in ('HDD', 'SSD', 'NVME'):
+            verb_remark = "all {0} devices".format(remark.upper())
+        else:
+            verb_remark = remark
+
+        print("{0}Start fio instance with {1} I/O type, {2} I/O ".format(INFO,
+              self.iotype, self._blocksize) + "blocksize, {} ".format(
+              numjobs) + "job(s), against {0}, runtime {1} sec, ".format(
+              verb_remark, self._runtime) + "ramp time {} sec".format(
+              self.__ramp_time))
+        print("{}Please wait for the instance to complete".format(INFO))
+        name = "{0}_{1}_{2}".format(remark, self.iotype, self._blocksize)
+        # Comment out "--io_size={} ".format(self.__iosize) + \
+        fio_cmd = \
+            "fio --ioengine={} ".format(self.__engine) + \
+            "{} ".format(self.__dir_buf) + \
+            "--rw={} ".format(self.iotype) + \
+            "--invalidate={} ".format(self.__invalidate) + \
+            "--iodepth={} ".format(self.__min_iodepth) + \
+            "--numjobs={} ".format(numjobs) + \
+            "--bs={} ".format(self._blocksize) + \
+            "--offset={} ".format(self.__offset) + \
+            "--stonewall --time_based " + \
+            "--ramp_time={} ".format(self.__ramp_time) + \
+            "--runtime={} ".format(self._runtime) + \
+            "--filename={} ".format(dev_to_test) + \
+            "--name={} ".format(name) + \
+            "--minimal --group_reporting " + \
+            "--output-format={} ".format(self.__output_format) + \
+            "--output={0}/{1}.json".format(self.logdir, name)
+
+        child = Popen(shlex.split(fio_cmd), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        out, err = child.communicate()
+        if child.returncode != 0:
+            print("{0}Failed to run cmd: {1}".format(ERRO, fio_cmd))
+            if err:
+                if isinstance(err, bytes) is True:
+                    err = err.decode()
+                print("{0}{1}".format(ERRO, err))
+            return 1
+        if out:
+            if isinstance(out, bytes) is True:
+                out = out.decode()
+            print("{0}{1}".format(INFO, out))
+        print("{0}{1} fio instance with {2} I/O blocksize, ".format(INFO,
+              self.iotype, self._blocksize) + "against {0}, ".format(verb_remark) +
+              "has completed")
+        return 0
+
+    def run_single_dev_tests(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        rc = 0
+        try:
+            alldevs = self._stor_devs['ALL']
+        except KeyError as e:
+            print("{}Tried to extract all storage devices from ".format(ERRO) +
+                  "{0} but hit KeyError: {1}".format(self._stor_devs, e))
+            rc = 1
+        if not alldevs:
+            print("{0}No storage device found".format(ERRO))
+            rc = 1
+        if rc != 0:
+            return rc
+
+        for dev in alldevs:
+            remark = dev.split('/')[-1]
+            rc = self.run_fio_instance(dev, remark)
+            if rc != 0:
+                print("{0}Hit error while running test against {1}".format(ERRO,
+                      dev))
+                return rc
+        print("{0}Single storage device tests completed".format(INFO))
+        print('')
+        return 0
+
+    def run_multilpe_dev_tests(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        for devtype in ['HDD', 'SSD', 'NVME']:
+            try:
+                devs = self._stor_devs[devtype]
+            except KeyError as e:
+                print("{0}Tried to extract devices from {1} ".format(ERRO,
+                      self._stor_devs) + " by device type but hit KeyError: " +
+                      "{}".format(e))
+                return 1
+            if len(devs) > 1:
+                dev_to_test = ':'.join(devs)
+                rc = self.run_fio_instance(dev_to_test, devtype)
+                if rc != 0:
+                    print("{0}Failed to run test against all {1} ".format(ERRO,
+                          devtype) + "storage devices")
+                    return rc
+
+        print("{}Multiple storage device tests completed".format(INFO))
+        print('')
+        return 0
+
+    def extract_single_dev_result(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+        Remarks:
+            Assign {caseName1: {'drop_ios': num,
+                                'iops': {'general': num, 'min': num,
+                                         'mean': num, 'stddev': num},
+                                'clat': {'min': num, 'max': num,
+                                         'mean': num, 'stddev': num}}
+            to self._sing_perf if succeeded.
+        """
+        if self.iotype == 'randwrite':
+            rwstr = 'write'
+        elif self.iotype == 'randread':
+            rwstr = 'read'
+        else:
+            print("{0}{1} I/O type does not supported currently".format(ERRO,
+                  self.iotype))
+            return 1
+
+        try:
+            alldevs = self._stor_devs['ALL']
+        except KeyError as e:
+            print("{}Tried to get all storage devices from ".format(ERRO) +
+                  "{} but hit KeyError: {}".format(self._stor_devs, e))
+            return 1
+
+        perf_kv = {}
+        for dev in alldevs:
+            name = "{0}_{1}_{2}".format(dev.split('/')[-1], self.iotype,
+                   self._blocksize)
+            outfile = "{0}/{1}.json".format(self.logdir, name)
+            json_obj = load_json(outfile)
+            if json_obj is None:
+                return 1
+            perf_kv[name] = {}
+            # Drop I/Os
+            try:
+                drop_ios = json_obj['jobs'][0][rwstr]['drop_ios']
+            except KeyError as e:
+                print("{}Tried to extract drop_ios but hit KeyError: ".format(ERRO) +
+                      "{}".format(e))
+                return 1
+            perf_kv[name]['drop_ios'] = int(drop_ios)
+            # IOPS
+            try:
+                iops = json_obj['jobs'][0][rwstr]['iops']
+                iops_min = json_obj['jobs'][0][rwstr]['iops_min']
+                iops_mean = json_obj['jobs'][0][rwstr]['iops_mean']
+                iops_stddev = json_obj['jobs'][0][rwstr]['iops_stddev']
+            except KeyError as e:
+                print("{}Tried to extract IOPS numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            try:
+                perf_kv[name]['iops'] = {}
+                perf_kv[name]['iops']['general'] = float("{:.2f}".format(iops))
+                perf_kv[name]['iops']['min'] = float("{:.2f}".format(iops_min))
+                perf_kv[name]['iops']['mean'] = float("{:.2f}".format(iops_mean))
+                perf_kv[name]['iops']['stddev'] = float("{:.2f}".format(iops_stddev))
+            except BaseException as e:
+                print("{}Tried to save IOPS numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            # Latency
+            try:
+                clat_min = json_obj['jobs'][0][rwstr]['clat_ns']['min']
+                clat_max = json_obj['jobs'][0][rwstr]['clat_ns']['max']
+                clat_mean = json_obj['jobs'][0][rwstr]['clat_ns']['mean']
+                clat_stddev = json_obj['jobs'][0][rwstr]['clat_ns']['stddev']
+            except KeyError as e:
+                print("{}Tried to extract latency numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            try:
+                perf_kv[name]['clat'] = {}
+                perf_kv[name]['clat']['min'] = ns_to_ms(clat_min)
+                perf_kv[name]['clat']['max'] = ns_to_ms(clat_max)
+                perf_kv[name]['clat']['mean'] = ns_to_ms(clat_mean)
+                perf_kv[name]['clat']['stddev'] = ns_to_ms(clat_stddev)
+            except KeyError as e:
+                print("{}Tried to save latency numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            if self._blocksize in ['1m', '2m']:
+                # Bandwidth
+                try:
+                    bw_min = json_obj['jobs'][0][rwstr]['bw_min']
+                    bw_mean = json_obj['jobs'][0][rwstr]['bw_mean']
+                except KeyError as e:
+                    print("{}Tried to extract BW numbers but hit ".format(ERRO) +
+                          "KeyError: {}".format(e))
+                    return 1
+                try:
+                    perf_kv[name]['bw'] = {}
+                    perf_kv[name]['bw']['min'] = "{} MiB/s".format(KiB_to_MiB(
+                                                 bw_min))
+                    perf_kv[name]['bw']['mean'] = "{} MiB/s".format(KiB_to_MiB(
+                                                  bw_mean))
+                except BaseException as e:
+                    print("{}Tried to save BW numbers but hit ".format(ERRO) +
+                          "KeyError: {}".format(e))
+                    return 1
+
+        if not perf_kv:
+            print("{}Failed to extract performance numbers from fio ".format(ERRO) +
+                  "output file in {}".format(self.logdir))
+            return 1
+        self._sing_perf = perf_kv
+        return 0
+
+    def extract_mult_dev_result(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+        Remarks:
+            Assign {caseName1: {'drop_ios': num,
+                                'iops': {'general': num, 'min': num,
+                                         'mean': num, 'stddev': num},
+                                'clat': {'min': num, 'max': num,
+                                         'mean': num, 'stddev': num}}
+            to self._mult_perf if succeeded.
+        """
+        if self.iotype == 'randwrite':
+            rwstr = 'write'
+        elif self.iotype == 'randread':
+            rwstr = 'read'
+        else:
+            print("{0}{1} I/O type does not supported currently".format(ERRO,
+                  self.iotype))
+            return 1
+
+        try:
+            hdds = self._stor_devs['HDD']
+            ssds = self._stor_devs['SSD']
+            nvms = self._stor_devs['NVME']
+        except KeyError:
+            pass
+        dev_types = []
+        if len(hdds) > 1:
+            dev_types.append('HDD')
+        if len(ssds) > 1:
+            dev_types.append('SSD')
+        if len(nvms) > 1:
+            dev_types.append('NVME')
+        if not dev_types:
+            print("{0}Failed to generate device type list".format(ERRO))
+            return 1
+
+        perf_kv = {}
+        for dev_type in dev_types:
+            name = "{0}_{1}_{2}".format(dev_type, self.iotype, self._blocksize)
+            outfile = "{0}/{1}.json".format(self.logdir, name)
+            json_obj = load_json(outfile)
+            if json_obj is None:
+                return 1
+            perf_kv[name] = {}
+            # Drop I/Os
+            try:
+                drop_ios = json_obj['jobs'][0][rwstr]['drop_ios']
+            except KeyError as e:
+                print("{}Tried to extract drop_ios but hit KeyError: ".format(ERRO) +
+                      "{}".format(e))
+                return 1
+            perf_kv[name]['drop_ios'] = int(drop_ios)
+            # IOPS
+            try:
+                iops = json_obj['jobs'][0][rwstr]['iops']
+                iops_min = json_obj['jobs'][0][rwstr]['iops_min']
+                iops_mean = json_obj['jobs'][0][rwstr]['iops_mean']
+                iops_stddev = json_obj['jobs'][0][rwstr]['iops_stddev']
+            except KeyError as e:
+                print("{}Tried to extract IOPS numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            try:
+                perf_kv[name]['iops'] = {}
+                perf_kv[name]['iops']['general'] = float("{:.2f}".format(iops))
+                perf_kv[name]['iops']['min'] = float("{:.2f}".format(iops_min))
+                perf_kv[name]['iops']['mean'] = float("{:.2f}".format(iops_mean))
+                perf_kv[name]['iops']['stddev'] = float("{:.2f}".format(iops_stddev))
+            except BaseException as e:
+                print("{}Tried to save IOPS numbers but hit KeyError: ".format(ERRO) +
+                      "{}".format(e))
+                return 1
+            # Latency
+            try:
+                clat_min = json_obj['jobs'][0][rwstr]['clat_ns']['min']
+                clat_max = json_obj['jobs'][0][rwstr]['clat_ns']['max']
+                clat_mean = json_obj['jobs'][0][rwstr]['clat_ns']['mean']
+                clat_stddev = json_obj['jobs'][0][rwstr]['clat_ns']['stddev']
+            except KeyError as e:
+                print("{}Tried to extract latency numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            try:
+                perf_kv[name]['clat'] = {}
+                perf_kv[name]['clat']['min'] = ns_to_ms(clat_min)
+                perf_kv[name]['clat']['max'] = ns_to_ms(clat_max)
+                perf_kv[name]['clat']['mean'] = ns_to_ms(clat_mean)
+                perf_kv[name]['clat']['stddev'] = ns_to_ms(clat_stddev)
+            except KeyError as e:
+                print("{}Tried to save latency numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
+                return 1
+            if self._blocksize in ['1m', '2m']:
+                # Bandwidth
+                try:
+                    bw_min = json_obj['jobs'][0][rwstr]['bw_min']
+                    bw_mean = json_obj['jobs'][0][rwstr]['bw_mean']
+                except KeyError as e:
+                    print("{}Tried to extract BW numbers but hit ".format(ERRO) +
+                          "KeyError: {}".format(e))
+                    return 1
+                try:
+                    perf_kv[name]['bw'] = {}
+                    perf_kv[name]['bw']['min'] = "{:.2f} MiB/s".format(KiB_to_MiB(
+                                                 bw_min))
+                    perf_kv[name]['bw']['mean'] = "{:.2f} MiB/s".format(KiB_to_MiB(
+                                                  bw_mean))
+                except BaseException as e:
+                    print("{}Tried to save BW numbers but hit ".format(ERRO) +
+                          "KeyError: {}".format(e))
+                    return 1
+
+        if not perf_kv:
+            print("{}Failed to extract performance numbers from ".format(ERRO) +
+                  "fio output file in {}".format(self.logdir))
+            return 1
+        self._mult_perf = perf_kv
+        return 0
+
+    def compare_single_result_with_KPIs(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        print("{}Check if performance numbers of single storage ".format(INFO) +
+              "device meet the required KPIs")
+        print('')
+        for devtype in ['HDD', 'SSD', 'NVME']:
+            devs = self._stor_devs[devtype]
+            if not devs:
+                continue
+            try:
+                drop_ios_kpi = self._kpis[devtype]['drop_ios']
+                min_iops_kpi = self._kpis[devtype]['iops']['min']
+                mean_iops_kpi = self._kpis[devtype]['iops']['mean']
+                max_clat_kpi = self._kpis[devtype]['clat']['max']
+                mean_clat_kpi = self._kpis[devtype]['clat']['mean']
+            except KeyError as e:
+                print("{0}Tried to get {1} KPIs but hit KeyError: ".format(ERRO,
+                      devtype) + "{}".format(e))
+                return 1
+
+            err_cnt = 0
+            for dev in devs:
+                name = "{}_randread_128k".format(dev.split('/')[-1])
+                try:
+                    drop_ios = self._sing_perf[name]['drop_ios']
+                    min_iops = self._sing_perf[name]['iops']['min']
+                    mean_iops = self._sing_perf[name]['iops']['mean']
+                    max_clat = self._sing_perf[name]['clat']['max']
+                    mean_clat = self._sing_perf[name]['clat']['mean']
+                except KeyError as e:
+                    print("{0}Tried to get performance number of {1} ".format(ERRO,
+                          name) + "but hit KeyError: {}".format(e))
+                    return 1
+                if drop_ios > drop_ios_kpi:
+                    print("{0}{1} has {2} drop I/O(s) which is ".format(ERRO, dev,
+                          drop_ios) + "over the required {} ".format(drop_ios_kpi) +
+                          "drop I/O KPI of {}".format(devtype))
+                    err_cnt += 1
+                else:
+                    print("{0}{1} has {2} drop I/O which meets ".format(INFO, dev,
+                          drop_ios) + "the required {} ".format(drop_ios_kpi) +
+                          "drop I/O KPI of {}".format(devtype))
+                if min_iops < min_iops_kpi:
+                    print("{0}{1} has {2} minimum IOPS which is ".format(ERRO, dev,
+                          min_iops) + "below the required {} minimum".format(
+                          min_iops_kpi) + "IOPS KPI of {}".format(devtype))
+                    err_cnt += 1
+                else:
+                    print("{0}{1} has {2} minimum IOPS which ".format(INFO, dev,
+                          min_iops) + "meets the required {} minimum ".format(
+                          min_iops_kpi) + "IOPS KPI of {}".format(devtype))
+                if mean_iops < mean_iops_kpi:
+                    print("{0}{1} has {2} mean IOPS which ".format(ERRO, dev,
+                          mean_iops) + "is below the required {} mean ".format(
+                          mean_iops_kpi) + "IOPS KPI of {}".format(devtype))
+                    err_cnt += 1
+                else:
+                    print("{0}{1} has {2} mean IOPS which meets ".format(INFO, dev,
+                          mean_iops) + "the required {} mean IOPS KPI ".format(
+                          mean_iops_kpi) + "of {}".format(devtype))
+                if max_clat > max_clat_kpi:
+                    print("{0}{1} has {2} msec maximum latency which ".format(ERRO,
+                          dev, max_clat) + "is over the required {} msec ".format(
+                          max_clat_kpi) + "maximum latency KPI of {}".format(
+                          devtype))
+                    err_cnt += 1
+                else:
+                    print("{0}{1} has {2} msec maximum latency which ".format(INFO,
+                          dev, max_clat) + "meets the required {} msec ".format(
+                          max_clat_kpi) + "maximum latency KPI of {}".format(
+                          devtype))
+                if mean_clat > mean_clat_kpi:
+                    print("{0}{1} has {2} msec mean latency which is ".format(ERRO,
+                          dev, mean_clat) + "over the required {} msec ".format(
+                          mean_clat_kpi) + "mean latency KPI of {}".format(
+                          devtype))
+                    err_cnt += 1
+                else:
+                    print("{0}{1} has {2} msec mean latency which ".format(INFO,
+                          dev, mean_clat) + "meets the required {} msec ".format(
+                          mean_clat_kpi) + "mean latency KPI of {}".format(
+                          devtype))
+                print('')
+        return err_cnt
+
+    def compare_multiple_results_with_KPIs(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        err_cnt = 0
+        print("{}Check if performance numbers of multiple storage ".format(INFO) +
+              "devices meet the required KPIs")
+        print('')
+        for devtype in ['HDD', 'SSD', 'NVME']:
+            devnum = len(self._stor_devs[devtype])
+            if devnum < 2:
+                continue
+            try:
+                drop_ios_kpi = self._kpis[devtype]['drop_ios']
+                min_iops_kpi = self._kpis[devtype]['iops']['min']
+                mean_iops_kpi = self._kpis[devtype]['iops']['mean']
+                max_clat_kpi = self._kpis[devtype]['clat']['max']
+                mean_clat_kpi = self._kpis[devtype]['clat']['mean']
+            except KeyError as e:
+                print("{0}Tried to get {1} KPIs but hit KeyError: ".format(ERRO,
+                      devtype) + "{}".format(e))
+                return 1
+            name = "{}_randread_128k".format(devtype)
+            try:
+                drop_ios = self._mult_perf[name]['drop_ios']
+                min_iops = self._mult_perf[name]['iops']['min']
+                mean_iops = self._mult_perf[name]['iops']['mean']
+                max_clat = self._mult_perf[name]['clat']['max']
+                mean_clat = self._mult_perf[name]['clat']['mean']
+            except KeyError as e:
+                print("{0}Tried to get performance number of {1} ".format(ERRO,
+                      name) + "but hit KeyError: {}".format(e))
+                return 1
+            if drop_ios > drop_ios_kpi:
+                print("{0}{1} has {2} drop I/O(s) which is over the ".format(ERRO,
+                      devtype, drop_ios) + "required {} ".format(drop_ios_kpi) +
+                      "drop I/O KPI of {}".format(devtype))
+                err_cnt += 1
+            else:
+                print("{0}{1} has {2} drop I/O(s) which meets the ".format(INFO,
+                      devtype, drop_ios) + "required {} ".format(drop_ios_kpi) +
+                      "drop I/O KPI of {}".format(devtype))
+            min_iops /= devnum
+            min_iops = float("{:.2f}".format(min_iops))
+            if min_iops < min_iops_kpi:
+                print("{0}{1} has {2} average minimum IOPS which is ".format(ERRO,
+                      devtype, min_iops) + "below the required {} ".format(
+                      min_iops_kpi) + "minimum IOPS KPI of {}".format(devtype))
+                err_cnt += 1
+            else:
+                print("{0}{1} has {2} average minimum IOPS which ".format(INFO,
+                      devtype, min_iops) + "meets the required {} ".format(
+                      min_iops_kpi) + "minimum IOPS KPI of {}".format(devtype))
+            mean_iops /= devnum
+            mean_iops = float("{:.2f}".format(mean_iops))
+            if mean_iops < mean_iops_kpi:
+                print("{0}{1} has {2} average mean IOPS which is ".format(ERRO,
+                      devtype, mean_iops) + "below the required {} ".format(
+                      mean_iops_kpi) + "mean IOPS KPI of {}".format(devtype))
+                err_cnt += 1
+            else:
+                print("{0}{1} has {2} average mean IOPS which meets ".format(INFO,
+                      devtype, mean_iops) + "the required {} mean IOPS ".format(
+                      mean_iops_kpi) + "KPI of {}".format(devtype))
+            if max_clat > max_clat_kpi:
+                print("{0}{1} has {2} msec maximum latency which is ".format(ERRO,
+                      devtype, max_clat) + "over the required {} msec ".format(
+                      max_clat_kpi) + "maximum latency KPI of {}".format(devtype))
+                err_cnt += 1
+            else:
+                print("{0}{1} has {2} msec maximum latency which ".format(INFO,
+                      devtype, max_clat) + "meets the required {} msec ".format(
+                      max_clat_kpi) + "maximum latency KPI of {}".format(devtype))
+            if mean_clat > mean_clat_kpi:
+                print("{0}{1} has {2} msec mean latency which is ".format(ERRO,
+                      devtype, mean_clat) + "over the required {} msec ".format(
+                      mean_clat_kpi) + "mean latency KPI of {}".format(devtype))
+                err_cnt += 1
+            else:
+                print("{0}{1} has {2} msec mean latency which meets ".format(INFO,
+                      devtype, mean_clat) + "the required {} msec mean ".format(
+                      mean_clat_kpi) + "latency KPI of {}".format(devtype))
+            print('')
+        return err_cnt
+
+    def show_single_dev_result_if_invalid(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        if not self._sing_perf or isinstance(self._sing_perf, dict) is False:
+            print("{} No performance data for single storage device".format(ERRO))
+            return 1
+        try:
+            alldevs = self._stor_devs['ALL']
+        except KeyError as e:
+            print("{0}Tried to get all storage devices from {1} ".format(ERRO,
+                  self._stor_devs) + "but hit KeyError: {}".format(e))
+            return 1
+
+        for dev in alldevs:
+            name = "{0}_{1}_{2}".format(dev.split('/')[-1], self.iotype,
+                   self._blocksize)
+            try:
+                drop_ios = self._sing_perf[name]['drop_ios']
+                min_iops = self._sing_perf[name]['iops']['min']
+                mean_iops = self._sing_perf[name]['iops']['mean']
+                max_clat = self._sing_perf[name]['clat']['max']
+                mean_clat = self._sing_perf[name]['clat']['mean']
+            except KeyError as e:
+                print("{0}Tried to get performance number of {1} but ".format(ERRO,
+                      name) + "hit KeyError: {}".format(e))
+                return 1
+            print("{0}{1} has {2} {3} drop I/O(s)".format(INFO, dev, drop_ios,
+                  self.iotype))
+            print("{0}{1} has {2} minimum {3} IOPS ".format(INFO, dev, min_iops,
+                  self.iotype))
+            print("{0}{1} has {2} mean {3} IOPS ".format(INFO, dev, mean_iops,
+                  self.iotype))
+            print("{0}{1} has {2} msec maximum {3} latency".format(INFO, dev,
+                  max_clat, self.iotype))
+            print("{0}{1} has {2} msec mean {3} latency".format(INFO, dev,
+                  mean_clat, self.iotype))
+            if self._blocksize in ['1m', '2m']:
+                try:
+                    min_bw = self._sing_perf[name]['bw']['min']
+                    mean_bw = self._sing_perf[name]['bw']['mean']
+                except KeyError as e:
+                    print("{}Tried to get bandwidth performance number ".format(
+                          ERRO) + "of {0} but hit KeyError: {1}".format(name, e))
+                    return 1
+                print("{0}{1} has {2} minimum {3} bandwidth".format(INFO, dev,
+                      min_bw, self.iotype))
+                print("{0}{1} has {2} mean {3} bandwidth".format(INFO, dev,
+                      mean_bw, self.iotype))
+            print('')
+        return 0
+
+    def show_multiple_dev_results_if_invalid(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        if not self._mult_perf or isinstance(self._mult_perf, dict) is False:
+            print("{} No performance data for multiple storage devices".format(ERRO))
+            return 1
+
+        for key, val in self._mult_perf.items():
+            try:
+                drop_ios = val['drop_ios']
+                min_iops = val['iops']['min']
+                mean_iops = val['iops']['mean']
+                max_clat = val['clat']['max']
+                mean_clat = val['clat']['mean']
+            except KeyError as e:
+                print("{0}Tried to get performance number of {1} ".format(ERRO, key) +
+                      "but hit KeyError: {}".format(e))
+                return 1
+            print("{0}{1} has {2} {3} drop I/O(s)".format(INFO, key, drop_ios,
+                  self.iotype))
+            print("{0}{1} has {2} minimum {3} IOPS".format(INFO, key, min_iops,
+                  self.iotype))
+            print("{0}{1} has {2} mean {3} IOPS".format(INFO, key, mean_iops,
+                  self.iotype))
+            print("{0}{1} has {2} msec maximum {3} latency".format(INFO, key,
+                  max_clat, self.iotype))
+            print("{0}{1} has {2} msec mean {3} latency".format(INFO, key,
+                  mean_clat, self.iotype))
+            if self._blocksize in ['1m', '2m']:
+                try:
+                    min_bw = val['bw']['min']
+                    mean_bw = val['bw']['mean']
+                except KeyError as e:
+                    print("{}Tried to get bandwidth performance number ".format(
+                          ERRO) + "of {0} but hit KeyError: {1}".format(key, e))
+                    return 1
+                print("{0}{1} has {2} minimum {3} bandwidth".format(INFO, key,
+                      min_bw, self.iotype))
+                print("{0}{1} has {2} mean {3} bandwidth".format(INFO, key,
+                      mean_bw, self.iotype))
+            print('')
+        return 0
+
+    def compare_peers(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            !0 if hit error.
+        """
+        try:
+            diff_pct_kpi = self._kpis['max_diff_pct']
+        except KeyError as e:
+            print("{}Tried to extract maximum difference percentage ".format(ERRO) +
+                  "from {0} but hit KeyError: {1}".format(self._kpis, e))
+            return 1
+
+        print("{}Define difference percentage as 100 * (max - min) / max".format(INFO))
+        print("{}Check if difference percentage of IOPS and latency ".format(INFO) +
+              "meets the KPI")
+        print('')
+        err_cnt = 0
+        for devtype in ['HDD', 'SSD', 'NVME']:
+            try:
+                devs = self._stor_devs[devtype]
+            except KeyError as e:
+                print("{}Tried to extract certain type of device from ".format(ERRO) +
+                      "{0} but hit KeyError: {1}".format(self._stor_devs, e))
+                return 1
+            dev_len = len(devs)
+            if dev_len  < 2:
+                print("{0}{1} device number is not enough to ".format(INFO, devtype) +
+                      "do difference percentage checking")
+                print('')
+                continue
+            mean_iopses = []
+            mean_clats = []
+            for dev in devs:
+                name = "{}_randread_128k".format(dev.split('/')[-1])
+                try:
+                    mean_iops = self._sing_perf[name]['iops']['mean']
+                    mean_clat = self._sing_perf[name]['clat']['mean']
+                except KeyError as e:
+                    print("{0}Tried to extract mean numbers of {1} but ".format(ERRO,
+                          name) + "hit KeyError: {}".format(e))
+                    return 1
+                mean_iopses.append(mean_iops)
+                mean_clats.append(mean_clat)
+
+            if len(mean_iopses) != dev_len:
+                print("{0}Length of mean IOPS list of {1} is incorrect".format(ERRO,
+                      devtype))
+                print('')
+                err_cnt += 1
+                continue
+            if len(mean_clats) != dev_len:
+                print("{0}Length of mean latency list of {1} is incorrect".format(ERRO,
+                      devtype))
+                print('')
+                err_cnt += 1
+                continue
+
+            iops_diff_pct = calc_diff_pct(mean_iopses)
+            if iops_diff_pct < 0:
+                print('')
+                err_cnt += 1
+                continue
+            clat_diff_pct = calc_diff_pct(mean_clats)
+            if clat_diff_pct < 0:
+                print('')
+                err_cnt += 1
+                continue
+
+            if iops_diff_pct > diff_pct_kpi:
+                print("{0}All {1}s have {2}% difference of IOPS ".format(INFO, devtype,
+                      iops_diff_pct) + "which is over required {}% maximum ".format(
+                      diff_pct_kpi) + "difference percentage KPI")
+                err_cnt += 1
+            else:
+                print("{0}All {1}s have {2}% difference of IOPS ".format(INFO, devtype,
+                      iops_diff_pct) + "which meets required {}% maximum ".format(
+                      diff_pct_kpi) + "difference percentage KPI")
+            if clat_diff_pct > diff_pct_kpi:
+                print("{0}All {1}s have {2}% difference of latency which ".format(INFO,
+                      devtype, clat_diff_pct) + "is over required {}% maximum ".format(
+                      diff_pct_kpi) + "difference percentage KPI")
+                err_cnt += 1
+            else:
+                print("{0}All {1}s have {2}% difference of latency which ".format(INFO,
+                      devtype, clat_diff_pct) + "meets required {}% maximum ".format(
+                      diff_pct_kpi) + "difference percentage KPI")
+            print('')
+        return err_cnt
+
+    def summarize_test_results(self):
+        """
+        Params:
+        Returns:
+            0 if succeeded.
+            1 if hit error.
+        """
+        kpi_chk_err_cnt = 0
+        if self._isvalid == 'yes':
+            sin_com = self.compare_single_result_with_KPIs()
+            if sin_com != 0:
+                kpi_chk_err_cnt += 1
+            mul_com = self.compare_multiple_results_with_KPIs()
+            if mul_com != 0:
+                kpi_chk_err_cnt += 1
+            comp_rc = self.compare_peers()
+            if comp_rc == 0:
+                print("{}All types of storage devices passed the KPI ".format(INFO) +
+                      "check")
+            else:
+                kpi_chk_err_cnt += 1
+                print("{}Not all types of storage devices passed the ".format(INFO) +
+                      "KPI check")
+            print('')
+            if kpi_chk_err_cnt == 0:
+                print("{}All storage devices are ready to run the ".format(INFO) +
+                      "next procedure\n")
+                return 0
+            else:
+                print("{}*NOT* all storage devices are ready. Storage ".format(ERRO) +
+                      "devices in this host *CANNOT* be used by IBM Storage Scale\n")
+                return 1
+        else:
+            err_cnt = 0
+            sing_rc = self.show_single_dev_result_if_invalid()
+            err_cnt += sing_rc
+            mult_rc = self.show_multiple_dev_results_if_invalid()
+            err_cnt += mult_rc
+            if err_cnt == 0:
+                print("{}Performance of storage devices in this host ".format(ERRO) +
+                      "have been tested. But this test instance is *invalid*\n")
+            else:
+                print("{}Storage devices in this host did not look ".format(ERRO) +
+                      "good. Storage devices on this host *CANNOT* be used by IBM " +
+                      "Storage Scale\n")
+            return 1
+
 
 def main():
-    # Check files permissions
-    fatal_error = check_permission_files()
-    if fatal_error:
-        sys.exit(RED + "QUIT: " + NOCOLOR + "there are files with "+
-                 "unexpected permissions or non existing\n")
+    """
+    Params:
+    Returns:
+        Exit if hit error.
+    """
+    arg_kv = parse_arguments()
+    if not arg_kv:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    # Parsing input
-    valid_test, bs_list, patterns_list, guess_drives, write_test, fio_runtime, no_rpm_check = parse_arguments()
+    show_header()
+    ss = StorageReadiness(arg_kv)
 
-    # JSON loads
-    os_dictionary = load_json("supported_OS.json")
-    packages_dictionary = load_json("packages.json")
-    if guess_drives and PYTHON3:
-        drives_dictionary = try_guess_drives()
-        #Overwrite the drives file
-        write_json_file_from_dictionary(drives_dictionary, "drives.json")
-    elif guess_drives and not PYTHON3:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "guess drives only works with Python 3\n")
-    else:
-        drives_dictionary = load_json("drives.json")
-    json_version = get_json_versions(os_dictionary, packages_dictionary)
+    rc = check_root_user()
+    if rc != 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    # Check OS
-    linux_distribution = check_distribution()
-    if linux_distribution in ["redhat", "centos", "centos linux", "fedora", "red hat enterprise linux"]:
-        redhat8 = check_os_redhat(os_dictionary)
-    else:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "this is not a supported OS to run this tool\n")
+    rc = ss.initialize_storage_devices()
+    if rc != 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+    rc = ss.initialize_KPIs()
+    if rc != 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    # Headers
-    estimated_runtime = estimate_runtime(fio_runtime, drives_dictionary, bs_list, patterns_list)
-    show_header(json_version, str(estimated_runtime), fio_runtime, drives_dictionary, bs_list, patterns_list)
-    write_accepted = False
-    if write_test:
-        write_accepted = show_write_warning()
+    time_cons = ss.estimate_time_consumption()
+    if time_cons < 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    # Check packages
-    if no_rpm_check == False:
-        packages_errors = packages_check(packages_dictionary)
-        if packages_errors > 0:
-            sys.exit(
-                RED +
-                "QUIT: " +
-                NOCOLOR +
-                " has missing packages that need to be installed before " +
-                "running this tool. Please take a look to the README file\n")
-    else:
-        print(YELLOW +
-              "WARNING: " +
-              NOCOLOR +
-              "you have disabled the RPM check, tool will fail if " +
-              "prerequisites listed on the README file are not installed")
+    rc = ss.check_arguments(time_cons)
+    if rc != 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    # Check root user
-    check_root_user()
+    if ss.iotype == 'randwrite':
+        show_write_warning()
 
-    # Check drives JSON entries
-    check_drives_json(drives_dictionary)
-
-    # Check drives
-    check_drive_exists(drives_dictionary)
+    # fio can be installed from resouce code or rpm package
+    rc = is_fio_available()
+    if rc != 0:
+        sys.exit("{0}Please ensure fio is installed and environment ".format(QUIT) +
+                 "variable is exported\n")
 
     # Create LOG directory
-    log_dir_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    logdir = create_local_log_dir(log_dir_timestamp)
+    try:
+        os.makedirs(ss.logdir)
+    except BaseException as e:
+        sys.exit("{0}Tried to create {1} but hit exception: {2}\n".format(QUIT,
+                 ss.logdir, e))
 
-    # Run tests
-    if write_accepted:
-        # Second and last warning about write tests
-        show_write_warning()
-    run_tests(fio_runtime, drives_dictionary, log_dir_timestamp, bs_list, patterns_list)
-    parallel_tests = run_parallel_tests(fio_runtime, drives_dictionary, log_dir_timestamp, bs_list, patterns_list)
+    rc = ss.run_single_dev_tests()
+    if rc != 0:
+        sys.exit("{}Failed to run test against single storage device\n".format(
+                 QUIT))
 
-    # Load results
-    fio_json_test_key_l, fio_iops_d, fio_iops_min_d, fio_iops_mean_d, \
-    fio_iops_stddev_d, fio_iops_drop_d, fio_lat_min_d, fio_lat_mean_d, \
-    fio_lat_stddev_d, fio_lat_max_d = load_fio_tests(drives_dictionary, logdir, bs_list, patterns_list, write_accepted)
+    rc = ss.run_multilpe_dev_tests()
+    if rc != 0:
+        sys.exit("{}Failed to run test against multiple storage devices\n".format(
+                 QUIT))
 
-    pfio_json_test_key_l, pfio_iops_d, pfio_iops_min_d, pfio_iops_mean_d, \
-    pfio_iops_stddev_d, pfio_iops_drop_d, pfio_lat_min_d, pfio_lat_mean_d, \
-    pfio_lat_stddev_d, pfio_lat_max_d = load_fio_parallel_tests(drives_dictionary, logdir, parallel_tests, bs_list, patterns_list, write_accepted)
+    rc = ss.extract_single_dev_result()
+    if rc != 0:
+        sys.exit("{}Failed to extract result for single storage device\n".format(
+                 QUIT))
 
-    # Compare against KPIs
-    kpi_errors_int = compare_against_kpis(drives_dictionary,
-                                          fio_json_test_key_l,
-                                          fio_iops_min_d,
-                                          fio_iops_drop_d,
-                                          fio_lat_max_d,
-                                          fio_iops_mean_d,
-                                          fio_lat_mean_d)
+    rc = ss.extract_mult_dev_result()
+    if rc != 0:
+        sys.exit("{0}Failed to extract result for multiple storage ".format(
+                 QUIT) + "devices\n")
 
-    HDD_diff_errors_int = compare_peers(drives_dictionary,
-                                        fio_json_test_key_l,
-                                        fio_iops_mean_d,
-                                        fio_lat_mean_d,
-                                        "HDD")
-    SSD_diff_errors_int = compare_peers(drives_dictionary,
-                                        fio_json_test_key_l,
-                                        fio_iops_mean_d,
-                                        fio_lat_mean_d,
-                                        "SSD")
-    NVME_diff_errors_int = compare_peers(drives_dictionary,
-                                        fio_json_test_key_l,
-                                        fio_iops_mean_d,
-                                        fio_lat_mean_d,
-                                        "NVME")
-
-    if (HDD_diff_errors_int + SSD_diff_errors_int + NVME_diff_errors_int) == 0:
-        print(GREEN +
-              "OK: " +
-              NOCOLOR +
-              "the difference between drives is acceptable by the KPIs")
-    else:
-        print(RED +
-              "ERROR: " +
-              NOCOLOR +
-              "the difference between drives is not acceptable by the KPIs")
-        kpi_errors_int = kpi_errors_int + 1
-
-    #Parallel info, drops still give error
-    parallel_errors = parallel_tests_print(pfio_json_test_key_l, pfio_iops_d, pfio_iops_min_d, pfio_iops_mean_d, \
-    pfio_iops_stddev_d, pfio_iops_drop_d, pfio_lat_min_d, pfio_lat_mean_d, \
-    pfio_lat_stddev_d, pfio_lat_max_d)
-
-    if (parallel_errors) >0:
-        kpi_errors_int = kpi_errors_int + 1
-
-    # Exit protocol
-    DEVNULL.close()
-    print_summary(valid_test, kpi_errors_int)
+    return ss.summarize_test_results()
 
 
 if __name__ == '__main__':
     main()
-

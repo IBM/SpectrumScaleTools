@@ -1,0 +1,38 @@
+{
+    "json_version": "1.0",
+    "HDD": { 
+        "drop_ios": 0,
+        "iops": {
+            "min": 55.0,
+            "mean": 110.0
+        },
+        "clat": {
+            "max": 1500.0,
+            "mean": 150.0
+        }
+    },
+    "SSD": {
+        "drop_ios": 0,
+        "iops": {
+            "min": 800.0,
+            "mean": 1200.0
+        },
+        "clat": {
+            "max": 100.0,
+            "mean": 20.0
+        }
+    },
+    "NVME": {
+        "drop_ios": 0,
+        "iops": {
+            "min": 10000.0,
+            "mean": 15000.0
+        },
+        "clat": {
+            "max": 20.0,
+            "mean": 1.5
+        },
+        "drop_ios": 0
+    },
+    "max_diff_pct": 10
+}
