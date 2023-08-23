@@ -582,7 +582,7 @@ class StorageReadiness():
                   self.__stordevfile))
             return 1
         print('')
-        print("{0}Got below storage devices to be tested".format(INFO))
+        print("{0}Try to extract storage devices to be tested".format(INFO))
         hdds = []
         ssds = []
         nvms = []
@@ -592,9 +592,9 @@ class StorageReadiness():
         for dev, dev_type in dev_kv.items():
             devtype = dev_type.upper()
             if devtype not in ('HDD', 'SSD', 'NVME'):
-                print("{0}{1} device type does not supported. ".format(ERRO,
+                print("{0}'{1}' device type does not supported".format(ERRO,
                       dev_type))
-                print("{0}Please re-write {1} refer to template".format(ERRO,
+                print("{0}Please edit {1} refer to the example file".format(ERRO,
                       self.__stordevfile))
                 return 1
             try:
@@ -602,8 +602,7 @@ class StorageReadiness():
             except FileNotFoundError as e:
                 print("{0}Tried to get block info of {1} but ".format(ERRO, dev) +
                       "hit FileNotFoundError: {}".format(e))
-                print("{0}Please review then modify {1}".format(ERRO,
-                      self.__stordevfile))
+                print("{0}Please review {1}".format(ERRO, self.__stordevfile))
                 return 1
             if isblk is True:
                 print("{0}{1} {2} is a block device".format(INFO, dev_type, dev))
@@ -886,6 +885,10 @@ class StorageReadiness():
             0 if succeeded.
             !0 if hit error.
         """
+        if not self._stor_devs:
+            print("{}It seems no multiple test is required".format(INFO))
+            return 0
+        mlt_cnt = 0
         for devtype in ['HDD', 'SSD', 'NVME']:
             try:
                 devs = self._stor_devs[devtype]
@@ -901,9 +904,11 @@ class StorageReadiness():
                     print("{0}Failed to run test against all {1} ".format(ERRO,
                           devtype) + "storage devices")
                     return rc
+                mlt_cnt += 1
 
-        print("{}Multiple storage device tests completed".format(INFO))
-        print('')
+        if mlt_cnt > 0:
+            print("{}Multiple storage device tests completed".format(INFO))
+            print('')
         return 0
 
     def extract_single_dev_result(self):
@@ -1057,8 +1062,8 @@ class StorageReadiness():
         if len(nvms) > 1:
             dev_types.append('NVME')
         if not dev_types:
-            print("{0}Failed to generate device type list".format(ERRO))
-            return 1
+            #print("{0}It seems no multiple test has been run\n".format(INFO))
+            return 0
 
         perf_kv = {}
         for dev_type in dev_types:
@@ -1329,7 +1334,7 @@ class StorageReadiness():
             !0 if hit error.
         """
         if not self._sing_perf or isinstance(self._sing_perf, dict) is False:
-            print("{} No performance data for single storage device".format(ERRO))
+            print("{}No performance data for single storage device".format(ERRO))
             return 1
         try:
             alldevs = self._stor_devs['ALL']
@@ -1383,9 +1388,9 @@ class StorageReadiness():
             0 if succeeded.
             !0 if hit error.
         """
-        if not self._mult_perf or isinstance(self._mult_perf, dict) is False:
-            print("{} No performance data for multiple storage devices".format(ERRO))
-            return 1
+        if not self._mult_perf:
+            #print("{} No performance data for multiple test".format(INFO))
+            return 0
 
         for key, val in self._mult_perf.items():
             try:
@@ -1573,28 +1578,28 @@ def main():
         sys.exit("{}Bye!\n".format(QUIT))
 
     show_header()
-    ss = StorageReadiness(arg_kv)
+    sr = StorageReadiness(arg_kv)
 
     rc = check_root_user()
     if rc != 0:
         sys.exit("{}Bye!\n".format(QUIT))
 
-    rc = ss.initialize_storage_devices()
+    rc = sr.initialize_storage_devices()
     if rc != 0:
         sys.exit("{}Bye!\n".format(QUIT))
-    rc = ss.initialize_KPIs()
+    rc = sr.initialize_KPIs()
     if rc != 0:
         sys.exit("{}Bye!\n".format(QUIT))
 
-    time_cons = ss.estimate_time_consumption()
+    time_cons = sr.estimate_time_consumption()
     if time_cons < 0:
         sys.exit("{}Bye!\n".format(QUIT))
 
-    rc = ss.check_arguments(time_cons)
+    rc = sr.check_arguments(time_cons)
     if rc != 0:
         sys.exit("{}Bye!\n".format(QUIT))
 
-    if ss.iotype == 'randwrite':
+    if sr.iotype == 'randwrite':
         show_write_warning()
 
     # fio can be installed from resouce code or rpm package
@@ -1605,32 +1610,32 @@ def main():
 
     # Create LOG directory
     try:
-        os.makedirs(ss.logdir)
+        os.makedirs(sr.logdir)
     except BaseException as e:
         sys.exit("{0}Tried to create {1} but hit exception: {2}\n".format(QUIT,
-                 ss.logdir, e))
+                 sr.logdir, e))
 
-    rc = ss.run_single_dev_tests()
+    rc = sr.run_single_dev_tests()
     if rc != 0:
         sys.exit("{}Failed to run test against single storage device\n".format(
                  QUIT))
 
-    rc = ss.run_multilpe_dev_tests()
+    rc = sr.run_multilpe_dev_tests()
     if rc != 0:
         sys.exit("{}Failed to run test against multiple storage devices\n".format(
                  QUIT))
 
-    rc = ss.extract_single_dev_result()
+    rc = sr.extract_single_dev_result()
     if rc != 0:
         sys.exit("{}Failed to extract result for single storage device\n".format(
                  QUIT))
 
-    rc = ss.extract_mult_dev_result()
+    rc = sr.extract_mult_dev_result()
     if rc != 0:
         sys.exit("{0}Failed to extract result for multiple storage ".format(
                  QUIT) + "devices\n")
 
-    return ss.summarize_test_results()
+    return sr.summarize_test_results()
 
 
 if __name__ == '__main__':

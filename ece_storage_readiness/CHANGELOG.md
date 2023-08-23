@@ -24,7 +24,7 @@
 - 1.10
     - Support RHEL8.7
     - Support RHEL9.1
-- 2.0
+- 1.20
    - Removed OS version limitation
    - Refactored most functions
    - Moved KPIs to json file
