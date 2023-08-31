@@ -88,3 +88,6 @@ Changelog:
 
 - 1.20
     - Support RHEL 8.7/9.1
+- 1.21
+    - Removed options: --latency, --throughput
+    - Added options: --thread-number, --parallel, --buffer-size, --socket-size

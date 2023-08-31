@@ -141,6 +141,8 @@ def makeCmds(server, client):
         cmdsInFile = cmdsInFile + "ttime %s\n" % (conf["ttime"])
     if (conf["testerThr"]):
         cmdsInFile = cmdsInFile + "threads %s\n" % (conf["testerThr"])
+    if (conf["parallel"]):
+        cmdsInFile = cmdsInFile + "parallel %s\n" % (conf["parallel"])
     if (conf["buffsize"]):
         cmdsInFile = cmdsInFile + "buffsize %s\n" % (conf["buffsize"])
     if (conf["socksize"]):
@@ -382,6 +384,7 @@ def longUsage():
     print("-R|--receiverThr nReceiverThread: receiver thread number")
     print("-W|--workerThr nWorkerThread: worker thread number")
     print("-T|--testerThr nTesterThread: tester thread number")
+    print("-P|--parallel nParallel socket connections")
     print("")
     print("Others:")
     print("-r|--rebuild: force rebuild the nsdperf executable before tests")
@@ -493,10 +496,11 @@ conf = {'server': '', 'client': '', 'test': '', 'ttime': '', 'buffsize': '',
 
 try:
     opts, args = getopt.getopt(
-            sys.argv[1:], "hs:c:n:t:l:b:k:R:W:T:rd:p:vx",
-        ["help", "server=", "client=", "test=", "testTime=", "buffsize=",
-         "socksize=", "nReciverThr=", "nWorkerThr=", "nTesterThr=", "rebuild",
-         "directory=", "rdmaPorts=", "debugLevel", "roce"])
+                     sys.argv[1:], "hs:c:n:t:l:b:k:R:W:T:P:rd:p:vx",
+                     ["help", "server=", "client=", "test=", "testTime=", "buffsize=",
+                     "socksize=", "nReciverThr=", "nWorkerThr=", "nTesterThr=",
+                     "nParallel=", "rebuild", "directory=", "rdmaPorts=", "debugLevel",
+                     "roce"])
 except getopt.GetoptError:
     shortUsage()
     sys.exit(1)
@@ -523,6 +527,8 @@ for op, value in opts:
         conf["workerThr"] = value
     elif op in ("-T", "--nTesterThr"):
         conf["testerThr"] = value
+    elif op in ("-P", "--nParallel"):
+        conf["parallel"] = value
     elif op in ("-r", "--rebuild"):
         conf["rebuild"] = True
     elif op in ("-d", "--directory"):

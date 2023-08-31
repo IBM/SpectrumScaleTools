@@ -17,29 +17,59 @@ from functools import reduce
 import re
 import csv
 
+# This script version, independent from the JSON versions
+VERSION = "1.21"
+
 # Colorful constants
 RED = '\033[91m'
+BOLDRED = '\033[91;1m'
 GREEN = '\033[92m'
 YELLOW = '\033[93m'
+PURPLE = '\033[35m'
+GOLDEN = '\033[33m'
+BOLDGOLDEN = '\033[33;1m'
 NOCOLOR = '\033[0m'
 
-# KPI + runtime acceptance values
-MAX_AVG_LATENCY = 1.00  # Acceptance value should be 1 msec or less
-FPING_COUNT = 500  # Acceptance value should be 500 or more
-PERF_RUNTIME = 1200  # Acceptance value should be 1200 or more
-MIN_NSD_THROUGHPUT = 2000  # Acceptance value with lots of margin
+INFO = "{0}INFO:{1} ".format(GREEN, NOCOLOR)
+WARN = "{0}WARNING: {1}".format(YELLOW, NOCOLOR)
+ERRO = "{0}FATAL:{1} ".format(RED, NOCOLOR)
+QUIT = "{0}QUIT: {1}".format(RED, NOCOLOR)
+
+# KPI and acceptance values
+KPI_AVG_LATENCY = 1.00 # 1 msec or less
+KPI_MAX_LATENCY = 2.00
+KPI_STDDEV_LTNC = KPI_AVG_LATENCY / 3.0
+KPI_NSD_THROUGH = 2000 # 2000 MB/s or more, with lots of margin
+ACC_FPING_COUNT = 500 # 500 or more
+ACC_TESTER_THRE = 32 # fixed 32
+ACC_BUFFER_SIZE = 2 * 1024 * 1024 # fixed 2M
+ACC_TTIME = 1200 # 1200 or more
+
+# TODO Move following global variables to json file
+# Minimum fping count
+MIN_FPING_COUNT = 2
+# Tester threads form nsdperf
+MAX_TESTERS = 4096
+# Parallel connection from maxTcpConnsPerNodeConn
+DEF_PARALLEL = 2
+# Max parallel connection from nsdperf
+MAX_PARALLEL = 8192 - 1
+# Socket size from nsdperf
+MAX_SOCKSIZE = 100 * 1024 * 1024
+# Buffer size from nsdperf
+MIN_BUFFSIZE = 4 * 1024
+MAX_BUFFSIZE = 16 * 1024 * 1024
 
 # GITHUB URL
 GIT_URL = "https://github.com/IBM/SpectrumScaleTools"
+
+NSDPERF = "nsdperfTool.py"
 
 # IP RE
 IPPATT = re.compile('.*inet\s+(?P<ip>.*)\/\d+')
 
 # devnull redirect destination
 DEVNULL = open(os.devnull, 'w')
-
-# This script version, independent from the JSON versions
-KOET_VERSION = "1.20"
 
 try:
     raw_input      # Python 2
@@ -114,12 +144,12 @@ def check_localnode_is_in(hosts_dictionary):
                  "Local node is not part of the test\n")
 
 
-def estimate_runtime(hosts_dictionary, fp_count, perf_runtime):
+def estimate_runtime(hosts_dictionary, fp_count, ttime_per_inst):
     number_of_hosts = len(hosts_dictionary)
     estimated_rt_fp = number_of_hosts * fp_count
     # use number of hosts + 1 to include N:N iteration of nsdperf
     # add 20 sec per node as startup, shutdown, compile overhead
-    estimated_rt_perf = (number_of_hosts + 1) * (20 + perf_runtime)
+    estimated_rt_perf = (number_of_hosts + 1) * (20 + ttime_per_inst)
     estimated_runtime = estimated_rt_fp + estimated_rt_perf
     # minutes we always return 2 even for short test runs
     estimated_runtime_minutes = int(ceil(estimated_runtime / 60.))
@@ -132,12 +162,12 @@ def parse_arguments():
         '--hosts',
         action='store',
         dest='hosts',
-        help='IPv4 addresses in CSV format. ' +
-        'E.g., IP0,IP1,IP2,IP3',
+        help='IPv4 addresses in CSV format. E.g., IP0,IP1,IP2,IP3',
         metavar='HOSTS_CSV',
         type=str,
         default="")
     parser.add_argument(
+        '-s',
         '--save-hosts',
         action='store_true',
         dest='save_hosts',
@@ -149,48 +179,72 @@ def parse_arguments():
         '--fping-count',
         action='store',
         dest='fping_count',
-        help='count of fping iteration per host. The interval ' +
-        'between each iteration is 1 second. The minimum value can ' +
-        'be set to 2. For certification, it is at least ' +
-        str(FPING_COUNT),
-        metavar='FPING_COUNT',
+        help='count of request packets to send to each target. The ' +
+        'minimum value can be set to {} packets for quick '.format(
+        MIN_FPING_COUNT) + 'test. For certification, it is at ' +
+        'least {} '.format(ACC_FPING_COUNT) + 'packets',
+        metavar='COUNT',
         type=int,
         default=500)
     parser.add_argument(
-        '-r',
-        '--perf-runtime',
-        action='store',
-        dest='perf_runtime',
-        help='runtime of nsdperf per instance. The minimum value ' +
-        'can be set to 10 seconds. For certification, it is at ' +
-        'least ' + str(PERF_RUNTIME) + " seconds",
-        metavar='PERF_RUNTIME',
-        type=int,
-        default=1200)
-    parser.add_argument(
-        '-l',         
-        '--latency',  
-        action='store',
-        dest='max_avg_latency',
-        help='latency KPI in floating-point format. ' +
-        'The maximum required value for certification is ' +
-        str(MAX_AVG_LATENCY) +
-        ' msec',      
-        metavar='KPI_LATENCY',
-        type=float,   
-        default=1.0)
-    parser.add_argument(
         '-t',
-        '--throughput',
+        '--ttime-per-instance',
         action='store',
-        dest='perf_throughput',
-        help='throughput KPI with unit MB/sec. ' +
-        'The minimum required value for certification is ' +
-        str(MIN_NSD_THROUGHPUT) +
-        ' MB/sec',
-        metavar='KPI_THROUGHPUT',
+        dest='ttime_per_inst',
+        help='test time per nsdperf instance with unit sec. The ' +
+        'minimum value can be set to 10 sec for quick test. For ' +
+        'certification, it is at least {} sec'.format(ACC_TTIME),
+        metavar='TIME',
         type=int,
-        default=2000)
+        default=ACC_TTIME)
+    parser.add_argument(
+        '-r',
+        '--thread-number',
+        action='store',
+        dest='test_thread',
+        help='test thread number per nsdperf instance on client. ' +
+        'The minimum value is 1 and the maximum value is {}. '.format(
+        MAX_TESTERS) + 'For certification, it is {}'.format(
+        ACC_TESTER_THRE),
+        metavar='THREAD',
+        type=int,
+        default=ACC_TESTER_THRE)
+    parser.add_argument(
+        '-p',
+        '--parallel',
+        action='store',
+        dest='para_conn',
+        help='parallel socket connections of nsdperf per instance. ' +
+        'The minimum value is 1 and the maximum value is {}. '.format(
+        MAX_PARALLEL) + 'Default value is {}'.format(DEF_PARALLEL),
+        metavar='PARALLEL',
+        type=int,
+        default=DEF_PARALLEL)
+    parser.add_argument(
+        '-b',
+        '--buffer-size',
+        action='store',
+        dest='buff_size',
+        help='buffer size for each I/O of nsdperf with unit bytes. The ' +
+        'minimum value is {0} bytes and the maximum value is {1} '.format(
+        MIN_BUFFSIZE, MAX_BUFFSIZE) + 'bytes. For certification, it is ' +
+        '{} bytes'.format(ACC_BUFFER_SIZE),
+        metavar='BUFFSIZE',
+        type=int,
+        default=ACC_BUFFER_SIZE)
+    parser.add_argument(
+        '-o',
+        '--socket-size',
+        action='store',
+        dest='socket_size',
+        help='maximum TCP socket send and receive buffer size with ' +
+        'unit bytes. 0 means the system default setting and the ' +
+        'maximum value is {} bytes. This tool would set the '.format(
+        MAX_SOCKSIZE) + 'socket size to the I/O buffer size if socket ' +
+        'size was not specified explicitly',
+        metavar='SOCKSIZE',
+        type=int,
+        default=ACC_BUFFER_SIZE)
     parser.add_argument(
         '--rdma',
         action='store',
@@ -216,27 +270,36 @@ def parse_arguments():
         'installed',
         default=False)
 
-    parser.add_argument('-v', '--version', action='version',
-                        version='KOET ' + KOET_VERSION)
+    parser.add_argument(
+        '-v',
+        '--version',
+        action='version',
+        version='Network Readiness {}\n'.format(VERSION))
+
     args = parser.parse_args()
-    if args.max_avg_latency <= 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "KPI latency cannot be zero or negative number\n")
-    if args.fping_count <= 1:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "fping count cannot be less than 2\n")
-    if args.perf_throughput <= 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "KPI throughput cannot be zero or negative number\n")
-    if args.perf_runtime <= 9:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "nsdperf runtime cannot be less than 10 seconds\n")
+
+    if args.fping_count < 2:
+        sys.exit("{}fping count cannot be less than 2\n".format(QUIT))
+    if args.ttime_per_inst < 10:
+        sys.exit("{}nsdperf test time cannot be less ".format(QUIT) +
+                 "than 10 sec\n")
+    if args.test_thread < 1 or args.test_thread > MAX_TESTERS:
+        sys.exit("{}nsdperf test threads are out of ".format(QUIT) +
+                 "range\n")
+    if args.para_conn < 1 or args.para_conn > MAX_PARALLEL:
+        sys.exit("{}nsdperf parallel connection is out ".format(QUIT) +
+                 "of range\n")
+    if args.buff_size < MIN_BUFFSIZE or args.buff_size > MAX_BUFFSIZE:
+        sys.exit("{}nsdperf buffer size is out of range\n".format(QUIT))
+    if args.socket_size < 0 or args.socket_size > MAX_SOCKSIZE:
+        sys.exit("{}nsdperf socket size is out of range\n".format(QUIT))
+
     if 'mlx' in args.rdma:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "RDMA ports must be OS names (ib0,ib1,...)\n")
+        sys.exit("{}RDMA ports must be OS names ".format(QUIT) +
+                 "(ib0,ib1,...)\n")
     if 'mlx' in args.roce:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "RoCE ports must be OS names (ib0,ib1,...)\n")
+        sys.exit("{}RoCE ports must be OS names ".format(QUIT) +
+                 "(ib0,ib1,...)\n")
     # we check is a CSV string and if so we put it on dictionary
     cli_hosts = False
     hosts_dictionary = {}
@@ -286,155 +349,146 @@ def parse_arguments():
                  "cannot generate hosts file if hosts not passed with --hosts")
 
 
-    return (round(args.max_avg_latency, 2), args.fping_count,
-            args.perf_runtime, args.perf_throughput,
-            cli_hosts, hosts_dictionary, rdma_test, rdma_ports_list,
-            roce_test, roce_ports_list,
-            args.no_rpm_check, args.save_hosts)
+    return (args.fping_count, args.ttime_per_inst, args.test_thread,
+            args.para_conn, args.buff_size, args.socket_size, cli_hosts,
+            hosts_dictionary, rdma_test, rdma_ports_list, roce_test,
+            roce_ports_list, args.no_rpm_check, args.save_hosts)
 
 
-def check_kpi_is_ok(max_avg_latency, fping_count, perf_bw, perf_rt):
-    if max_avg_latency > MAX_AVG_LATENCY:
-        latency_kpi_certifies = False
-    else:
-        latency_kpi_certifies = True
+def check_parameters(
+        fping_count,
+        ttime_per_inst,
+        thread_num,
+        para_conn,
+        buffer_size,
+        socket_size):
+    """
+    Params:
+        fping_count: pakcet count per fping instance.
+        ttime_per_inst: test time per nsdperf instance.
+        thread_num: test thread number per nsdperf instance.
+        para_conn: parallel socket connection number per nsdperf instance.
+        buffer_size: I/O buffer size of nsdperf.
+        socket_size: socket size.
+    Returns:
+        True if all parameters meet the requirements.
+        False if not.
+    """
+    acceptance_flag = False
+    if fping_count and fping_count >= ACC_FPING_COUNT and \
+        ttime_per_inst and ttime_per_inst >= ACC_TTIME and \
+        thread_num and thread_num == ACC_TESTER_THRE and \
+        thread_num >= para_conn and \
+        buffer_size and buffer_size == ACC_BUFFER_SIZE and \
+        socket_size and socket_size >= buffer_size:
+        acceptance_flag = True
+    return acceptance_flag
 
-    if fping_count < FPING_COUNT:
-        fping_count_certifies = False
-    else:
-        fping_count_certifies = True
 
-    if perf_bw < MIN_NSD_THROUGHPUT:
-        perf_bw_certifies = False
-    else:
-        perf_bw_certifies = True
-
-    if perf_rt < PERF_RUNTIME:
-        perf_rt_certifies = False
-    else:
-        perf_rt_certifies = True
-
-    return (latency_kpi_certifies, fping_count_certifies, perf_bw_certifies,
-            perf_rt_certifies)
-
-
-def show_header(koet_h_version, json_version,
-                estimated_runtime_str, max_avg_latency,
-                fping_count, perf_throughput, perf_runtime):
+def show_header(
+        module_version,
+        json_version,
+        estimated_runtime_str,
+        fping_count,
+        ttime_per_inst,
+        thread_num,
+        para_conn,
+        buffer_size,
+        socket_size):
     # Say hello and give chance to disagree
     while True:
         print("")
-        print(GREEN + "Welcome to KOET, version " + koet_h_version + NOCOLOR)
+        print("Welcome to Network Readiness {}".format(module_version))
+        print("")
+        print("The purpose of the tool is to obtain network metrics of a " +
+              "number of nodes then compare them with certain KPIs")
+        print("Please access to {} to get required versions ".format(GIT_URL) +
+              "and report issues if necessary")
+        print("")
+        print("{0}Prerequisite:{1}".format(BOLDGOLDEN, NOCOLOR))
+        print("{}  Remote root passwordless ssh between all ".format(GOLDEN) +
+              "all nodes must be configured{}".format(NOCOLOR))
+        print("")
+        print("{0}NOTE:{1}".format(BOLDRED, NOCOLOR))
+        print("{}  This tool comes with absolutely no warranty ".format(RED) +
+              "of any kind. Use it at your own risk.{}".format(NOCOLOR))
+        print("{}  The latency and throughput numbers shown ".format(RED) +
+              "by this tool are under special parameters. That is not a " +
+              "generic storage standard.{}".format(NOCOLOR))
+        print("{}  The numbers do not reflect any specification ".format(RED) +
+              "of IBM Storage Scale or any user workload's performance " +
+              "number that run on it.{}".format(NOCOLOR))
         print("")
         print("JSON files versions:")
-        print("\tsupported OS:\t\t" + json_version['supported_OS'])
-        print("\tpackages: \t\t" + json_version['packages'])
-        print("\tpackages RDMA:\t\t" + json_version['packages_rdma'])
-        print("\tpackages RoCE:\t\t" + json_version['packages_roce'])
+        print("    supported OS:     {}".format(json_version['supported_OS']))
+        print("    packages:         {}".format(json_version['packages']))
+        print("    packages RDMA:    {}".format(json_version['packages_rdma']))
+        print("    packages RoCE:    {}".format(json_version['packages_roce']))
         print("")
-        print("Please use " + GIT_URL +
-              " to get latest versions and report issues about this tool.")
+        print("{0}To certify the environment:{1}".format(GREEN, NOCOLOR))
+        print("{0}The average latency KPI is {1} msec{2}".format(GREEN,
+              KPI_AVG_LATENCY, NOCOLOR))
+        print("{0}The maximum latency KPI is {1} mesc{2}".format(GREEN,
+              KPI_MAX_LATENCY, NOCOLOR))
+        kpi_lat_stddev = "{:.2f}".format(KPI_STDDEV_LTNC)
+        print("{0}The standard deviation latency KPI is {1} mesc{2}".format(
+              GREEN, kpi_lat_stddev, NOCOLOR))
+        print("{0}The throughput KPI is {1} MB/sec{2}".format(GREEN,
+              KPI_NSD_THROUGH, NOCOLOR))
         print("")
-        print(
-            "The purpose of KOET is to obtain network metrics " +
-            "for a number of nodes.")
-        print("")
-        lat_kpi_ok, fping_kpi_ok, perf_kpi_ok, perf_rt_ok = check_kpi_is_ok(
-            max_avg_latency, fping_count, perf_throughput, perf_runtime)
-        if lat_kpi_ok:
-            print(GREEN + "The latency KPI value of " + str(max_avg_latency) +
-                  " msec is good to certify the environment" + NOCOLOR)
+        if fping_count and fping_count >= ACC_FPING_COUNT:
+            print("{}The fping count per instance needs at least ".format(
+                  INFO) + "{} request packets. Current setting ".format(
+                  ACC_FPING_COUNT) + "is {0} packets".format(fping_count))
         else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The latency KPI value of " +
-                str(max_avg_latency) +
-                " msec is too high to certify the environment")
-        print("")
-        if fping_kpi_ok:
-            print(
-                GREEN +
-                "The fping count value of " +
-                str(fping_count) +
-                " ping per test and node is good to certify the " +
-                "environment" + NOCOLOR)
+            print("{}The fping count per instance needs at least ".format(
+                  WARN) + "{} request packets. Current setting ".format(
+                  ACC_FPING_COUNT) + "is {} packets".format(fping_count))
+        if ttime_per_inst and ttime_per_inst >= ACC_TTIME:
+            print("{0}The nsdperf needs at least {1} sec test time ".format(
+                  INFO, ACC_TTIME) + "per instance. Current setting is " +
+                  "{0} sec".format(ttime_per_inst))
         else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The fping count value of " +
-                str(fping_count) +
-                " ping per test and node is not enough " +
-                "to certify the environment")
-        print("")
-        if perf_kpi_ok:
-            print(
-                GREEN +
-                "The throughput value of " +
-                str(perf_throughput) +
-                " MB/sec is good to certify the environment" +
-                NOCOLOR)
+            print("{0}The nsdperf needs at least {1} sec test ".format(WARN,
+                  ACC_TTIME) + "time per instance. Current setting is " +
+                  "{} sec".format(ttime_per_inst))
+        if thread_num and thread_num == ACC_TESTER_THRE:
+            if thread_num < para_conn:
+                print("{0}{1} nsdperf test thread per instance is ".format(
+                      WARN, thread_num) + "less than {} parallel ".format(
+                      para_conn) + "connection(s)")
+            else:
+                print("{0}The nsdperf needs {1} test thread per ".format(INFO,
+                      ACC_TESTER_THRE) + "instance. Current setting is " +
+                      "{}".format(thread_num))
         else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The throughput value of " +
-                str(perf_throughput) +
-                " MB/sec is not enough to certify the environment")
-        print("")
-        if perf_rt_ok:
-            print(
-                GREEN +
-                "The performance runtime value of " +
-                str(perf_runtime) +
-                " second per test and node is good to certify the " +
-                "environment" + NOCOLOR)
+            print("{0}The nsdperf needs {1} test thread per ".format(WARN,
+                  ACC_TESTER_THRE) + "instance. Current setting is " +
+                  "{}".format(thread_num))
+        if buffer_size and buffer_size == ACC_BUFFER_SIZE:
+            if socket_size < buffer_size:
+                print("{0}{1} bytes nsdperf socket size is less ".format(WARN,
+                      socket_size) + "than {} bytes buffer size".format(
+                      buffer_size))
+            else:
+                print("{0}The nsdperf needs {1} bytes buffer size. ".format(
+                      INFO, ACC_BUFFER_SIZE) + "Current setting is " +
+                      "{} bytes".format(buffer_size))
         else:
-            print(
-                YELLOW +
-                "WARNING: " +
-                NOCOLOR +
-                "The performance runtime value of " +
-                str(perf_runtime) +
-                " second per test and node is not enough " +
-                "to certify the environment")
+            print("{0}The nsdperf needs {1} bytes buffer size. ".format(WARN,
+                  ACC_BUFFER_SIZE) + "Current setting is {} bytes".format(
+                  buffer_size))
         print("")
-        print(
-            YELLOW +
-            "It requires remote ssh passwordless between all nodes for user " +
-            "root already configured" +
-            NOCOLOR)
-        print("")
-        print(YELLOW + "This test run estimation is " +
-              estimated_runtime_str + " minutes" + NOCOLOR)
-        print("")
-        print(
-            RED +
-            "This software comes with absolutely no warranty of any kind. " +
-            "Use it at your own risk" +
-            NOCOLOR)
-        print("")
-        print(
-            RED +
-            "NOTE: The bandwidth numbers shown in this tool are for a very " +
-            "specific test. This is not a storage benchmark." +
-            NOCOLOR)
-        print(
-            RED +
-            "They do not necessarily reflect the numbers you would see with " +
-            "IBM Storage Scale and your particular workload" +
-            NOCOLOR)
+        print("{}The total time consumption according to above ".format(INFO) +
+              "paramters is {0}~{1} minutes{2}".format(PURPLE,
+              estimated_runtime_str, NOCOLOR))
         print("")
         run_this = raw_input("Do you want to continue? (y/n): ")
         if run_this.lower() == 'y':
             break
         if run_this.lower() == 'n':
             print
-            sys.exit("Have a nice day! Bye.\n")
+            sys.exit("{}Have a nice day! Bye.\n".format(QUIT))
     print("")
 
 
@@ -1286,10 +1340,13 @@ def latency_test(hosts_dictionary, logdir, fping_count):
         print("Starting ping run from " + srchost + " to all nodes")
         fileurl = os.path.join(logdir, "lat_" + srchost + "_" + "all")
         command = "ssh -o StrictHostKeyChecking=no -o LogLevel=error " + \
-            srchost + " fping -C " + fping_count_str + " -q -A " + hosts_fping
+                  str(srchost) + " fping -C " + fping_count_str + \
+                  " -q -A " + str(hosts_fping)
         with open(fileurl, 'wb', 0) as logfping:
-            runfping = subprocess.Popen(shlex.split(
-                command), stderr=subprocess.STDOUT, stdout=logfping)
+            runfping = subprocess.Popen(
+                           shlex.split(command),
+                           stderr=subprocess.STDOUT,
+                           stdout=logfping)
             runfping.wait()
             logfping.close()
         print("Ping run from " + srchost + " to all nodes completed")
@@ -1310,7 +1367,11 @@ def throughput_test_os(command, nsd_logfile, client):
 
 def throughput_test(hosts_dictionary,
                     logdir,
-                    perf_runtime,
+                    ttime_per_inst,
+                    test_thread,
+                    para_conn,
+                    buff_size,
+                    socket_size,
                     rdma_test,
                     rdma_ports_csv_mlx,
                     roce_test,
@@ -1320,25 +1381,25 @@ def throughput_test(hosts_dictionary,
     print("Starting throughput tests. Please be patient.")
     for client in hosts_dictionary.keys():
         print("")
-        print("Starting throughput run from " + client + " to all nodes")
+        print("Start throughput run from " + client + " to all nodes")
         server_hosts_dictionary = dict(hosts_dictionary)
         del server_hosts_dictionary[client]
         server_csv_str = (",".join(server_hosts_dictionary.keys()))
         # Craft the call of nsdperf exec/wrapper
+        pre_cmd = "{0} -t read -k {1} -b {2} ".format(NSDPERF, socket_size, \
+                  buff_size) + "-W {0} -T {0} -P {1} -d {2} ".format( \
+                  test_thread, para_conn, logdir) + " -s {} ".format( \
+                  server_csv_str) + "-c {0} -l {1}".format(client,
+                  ttime_per_inst)
+        command = ""
         if rdma_test:
-            command = "./nsdperfTool.py -t read -k 4194304 -b 4194304 " \
-                      "-R 32 -W 32 -T 32 -d " + logdir + " -s " + \
-                      server_csv_str + " -c " + client + " -l " + \
-                      str(perf_runtime) + " -p " + rdma_ports_csv_mlx
+            command = "{0} -p {1}".format(pre_cmd, rdma_ports_csv_mlx)
         elif roce_test:
-            command = "./nsdperfTool.py -t read -k 4194304 -b 4194304 " \
-                      "-R 32 -W 32 -T 32 -d " + logdir + " -s " + \
-                      server_csv_str + " -c " + client + " -l " + \
-                      str(perf_runtime) + " -x " + " -p " + roce_ports_csv_mlx
+            command = "{0} -p {1}".format(pre_cmd, roce_ports_csv_mlx)
         else:
-            command = "./nsdperfTool.py -t read -k 4194304 -b 4194304 " \
-                "-R 256 -W 256 -T 256 -d " + logdir + " -s " + \
-                server_csv_str + " -c " + client + " -l " + str(perf_runtime)
+            # History: nReceivers = 256, nWorkers = 256, nTesterThreads = 256
+            command = pre_cmd
+
         nsd_logfile = open(logdir + "/nsdperfTool_log", "a")
         if PYTHON3:           
             command = "python3 {}".format(command)
@@ -1366,20 +1427,19 @@ def throughput_test(hosts_dictionary,
         servers_nodes_d = dict(hosts_dictionary.items()[:middle_index])
     clients_csv = (",".join(clients_nodes_d.keys()))
     servers_csv = (",".join(servers_nodes_d.keys()))
+    pre_cmd = "{0} -t read -k {1} -b {2} ".format(NSDPERF, socket_size, \
+              buff_size) + "-W {0} -T {0} -P {1} -d {2} ".format( \
+              test_thread, para_conn, logdir) + " -s {} ".format( \
+              servers_csv) + "-c {0} -l {1}".format(clients_csv,
+              ttime_per_inst)
     if rdma_test:
-        command = "./nsdperfTool.py -t read -k 4194304 -b 4194304 " \
-            "-R 32 -W 32 -T 32 -d " + logdir + " -s " + \
-            servers_csv + " -c " + clients_csv + " -l " + \
-            str(perf_runtime) + " -p " + rdma_ports_csv_mlx
+        command = "{0} -p {1}".format(pre_cmd, rdma_ports_csv_mlx)
     elif roce_test:
-        command = "./nsdperfTool.py -t read -k 4194304 -b 4194304 " \
-            "-R 32 -W 32 -T 32 -d " + logdir + " -s " + \
-            servers_csv + " -c " + clients_csv + " -l " + \
-            str(perf_runtime) +" -x " + " -p " + roce_ports_csv_mlx
+        command = "{0} -p {1}".format(pre_cmd, roce_ports_csv_mlx)
     else:
-        command = "./nsdperfTool.py -t read -k 4194304 -b 4194304 " \
-            "-R 256 -W 256 -T 256 -d " + logdir + " -s " + \
-            servers_csv + " -c " + clients_csv + " -l " + str(perf_runtime)
+        # History: nReceivers = 256, nWorkers = 256, nTesterThreads = 256
+        command = pre_cmd
+
     nsd_logfile = open(logdir + "/nsdperfTool_log", "a")
     if PYTHON3:
         command = "python3 {}".format(command)
@@ -2082,8 +2142,10 @@ def test_ssh(hosts_dictionary):
     print("")
 
 
-def print_end_summary(a_avg_fp_err, a_nsd_err, lat_kpi_ok,
-                      fping_kpi_ok, perf_kpi_ok, perf_rt_ok):
+def print_end_summary(
+        a_avg_fp_err,
+        a_nsd_err,
+        acceptance_flag):
     # End summary and say goodbye
     passed = True
     print("")
@@ -2127,8 +2189,7 @@ def print_end_summary(a_avg_fp_err, a_nsd_err, lat_kpi_ok,
             "before you proceed to the next step" +
             NOCOLOR)
 
-    if lat_kpi_ok and fping_kpi_ok and perf_kpi_ok and perf_kpi_ok \
-       and perf_rt_ok and passed:
+    if acceptance_flag is True and passed is True:
         print(
             GREEN +
             "OK: " +
@@ -2158,12 +2219,10 @@ def main():
                  "unexpected permissions or non existing\n")
 
     # Parsing input
-    max_avg_latency, fping_count, perf_runtime, min_nsd_throughput, \
-         cli_hosts, hosts_dictionary, rdma_test, rdma_ports_list, \
-         roce_test, roce_ports_list, no_rpm_check, \
-         save_hosts = parse_arguments()
-    max_max_latency = max_avg_latency * 2
-    max_stddev_latency = max_avg_latency / 3
+    fping_count, ttime_per_inst, test_thread, para_conn, buff_size, \
+    socket_size, cli_hosts, hosts_dictionary, rdma_test, rdma_ports_list, \
+    roce_test, roce_ports_list, no_rpm_check, save_hosts = \
+        parse_arguments()
     rdma_ports_csv_mlx = []
     roce_ports_csv_mlx = []
 
@@ -2200,10 +2259,11 @@ def main():
                                     packages_dictionary,
                                     packages_roce_dictionary,
                                     packages_rdma_dictionary)
-    estimated_runtime_str = str(
-        estimate_runtime(hosts_dictionary, fping_count, perf_runtime))
-    show_header(KOET_VERSION, json_version, estimated_runtime_str,
-                max_avg_latency, fping_count, min_nsd_throughput, perf_runtime)
+    estimated_runtime_str = str(estimate_runtime(hosts_dictionary,
+                                fping_count, ttime_per_inst))
+    show_header(VERSION, json_version, estimated_runtime_str, fping_count,
+                ttime_per_inst, test_thread, para_conn, buff_size,
+                socket_size)
 
     # JSON hosts write
     if save_hosts:
@@ -2277,7 +2337,11 @@ def main():
     latency_test(hosts_dictionary, logdir, fping_count)
     many2many_clients = throughput_test(hosts_dictionary,
                                         logdir,
-                                        perf_runtime,
+                                        ttime_per_inst,
+                                        test_thread,
+                                        para_conn,
+                                        buff_size,
+                                        socket_size,
                                         rdma_test,
                                         rdma_ports_csv_mlx,
                                         roce_test,
@@ -2302,20 +2366,25 @@ def main():
         all_fping_dictionary_min,
         all_fping_dictionary_stddev,
         "1:n",
-        max_avg_latency,
-        max_max_latency,
-        max_stddev_latency,
+        KPI_AVG_LATENCY,
+        KPI_MAX_LATENCY,
+        KPI_STDDEV_LTNC,
         rdma_test,
         roce_test)
-    all_nsd_errors = nsd_KPI(min_nsd_throughput, throughput_dict, nsd_lat_dict,
+    all_nsd_errors = nsd_KPI(KPI_NSD_THROUGH, throughput_dict, nsd_lat_dict,
                              nsd_std_dict, pc_diff_bw, max_bw, min_bw,
                              mean_bw, stddev_bw, nsd_rxe_dict, nsd_rxe_m2m_d,
                              nsd_txe_dict, nsd_txe_m2m_d, nsd_rtr_dict,
                              nsd_rtr_m2m_d)
 
-    # Exit protocol
-    lat_kpi_ok, fping_kpi_ok, perf_kpi_ok, perf_rt_ok = check_kpi_is_ok(
-        max_avg_latency, fping_count, min_nsd_throughput, perf_runtime)
+    acceptance_flag = check_parameters(
+                          fping_count,
+                          ttime_per_inst,
+                          test_thread,
+                          para_conn,
+                          buff_size,
+                          socket_size)
+
     save_throughput_to_csv(
         logdir,
         throughput_dict
@@ -2324,10 +2393,7 @@ def main():
     return_code = print_end_summary(
         all_avg_fping_errors,
         all_nsd_errors,
-        lat_kpi_ok,
-        fping_kpi_ok,
-        perf_kpi_ok,
-        perf_rt_ok)
+        acceptance_flag)
     print("")
     return return_code
 
