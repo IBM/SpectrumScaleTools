@@ -1,9 +1,2 @@
 {
-    "/dev/sda": "HDD",
-    "/dev/sdb": "HDD",
-    "/dev/sdc": "SSD",
-    "/dev/sdd": "SSD",
-    "/dev/nvme0n1": "NVME",
-    "/dev/nvme1n1": "NVME"
 }
-

@@ -14,20 +14,22 @@ import shlex
 from math import ceil
 from stat import S_ISBLK
 from subprocess import Popen, PIPE
+from collections import OrderedDict
 
 RED = '\033[91m'
+BOLDRED = '\033[91;1m'
 BLUE = '\033[34m'
 GREEN = '\033[92m'
 PURPLE = '\033[35m'
 YELLOW = '\033[93m'
-RESETCOLOR = '\033[0m'
+RESETCOL = '\033[0m'
 
-INFO = "[ {0}INFO{1}  ] ".format(GREEN, RESETCOLOR)
-WARN = "[ {0}WARN{1}  ] ".format(YELLOW, RESETCOLOR)
-ERRO = "[ {0}FATAL{1} ] ".format(RED, RESETCOLOR)
-QUIT = "[ {0}QUIT{1}  ] ".format(RED, RESETCOLOR)
+INFO = "[ {0}INFO{1}  ] ".format(GREEN, RESETCOL)
+WARN = "[ {0}WARN{1}  ] ".format(YELLOW, RESETCOL)
+ERRO = "[ {0}FATAL{1} ] ".format(RED, RESETCOL)
+QUIT = "[ {0}QUIT{1}  ] ".format(RED, RESETCOL)
 
-VERSION = "1.20"
+VERSION = "1.21"
 GIT_URL = "https://github.com/IBM/SpectrumScaleTools"
 BASEDIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -39,6 +41,7 @@ DEFAULT_NJ = 1
 DEFAULT_RT = 300
 BS_CHOICES = ['4k', '128k', '256k', '512k', '1m', '2m']
 STORDEV_FL = "{}/storage_devices.json".format(BASEDIR)
+KPI_FL = "{}/randread_128KiB_16iodepth_KPIs.json".format(BASEDIR)
 
 try:
     input = raw_input
@@ -59,7 +62,8 @@ def load_json(json_file):
         return None
     try:
         with open(json_file, 'r') as fh:
-            return json.load(fh)
+            dict_obj = json.load(fh, object_pairs_hook=OrderedDict)
+            return dict_obj
     except Exception as e:
         print("{0}Tried to load JSON file {1} but hit ".format(ERRO, json_file) +
               "exception: {}".format(e))
@@ -88,8 +92,8 @@ def dump_json(src_kv, dst_file):
             fh.write(src_data)
         return 0
     except Exception as e:
-        print("{0}Tried to [over]write {1} but hit exception: {2}\n".format(
-              ERRO, dst_file, e))
+        print("{0}Tried to [over]write file {1} but ".format(ERRO,
+              dst_file) + "hit exception: {}\n".format(e))
         return 1
 
 
@@ -100,8 +104,14 @@ def is_fio_available():
         0 if fio is available.
         1 if not.
     """
-    child = Popen(shlex.split('fio -v'), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    out, err = child.communicate()
+    try:
+        child = Popen(shlex.split('fio -v'), stdin=PIPE, stdout=PIPE,
+                      stderr=PIPE)
+        out, err = child.communicate()
+    except BaseException as e:
+        print("{}Tried to run cmd 'fio -v' but hit ".format(ERRO) +
+              "exception: {}".format(e))
+        return 1
     out = out.strip()
     if child.returncode != 0 or not out:
         print("{}Ran cmd: fio -v".format(INFO))
@@ -114,8 +124,8 @@ def is_fio_available():
     if isinstance(out, bytes) is True:
         out = out.decode()
     fio_ver = out.strip()
-    print("{0}This host has fio binary file with version {1} ".format(INFO,
-          fio_ver) + "which could be used directly")
+    print("{0}fio benchmark is available with version {1}".format(INFO,
+          fio_ver))
     return 0
 
 
@@ -173,8 +183,14 @@ def get_boot_devices():
         ['error'] if hit error.
     """
     print("{}Guess localhost OS boot device".format(INFO))
-    child = Popen(shlex.split('df -l'), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    out, err = child.communicate()
+    try:
+        child = Popen(shlex.split('df -l'), stdin=PIPE, stdout=PIPE,
+                      stderr=PIPE)
+        out, err = child.communicate()
+    except BaseException as e:
+        print("{}Tried to run cmd 'df -l' but hit ".format(ERRO) +
+              "exception: {}".format(e))
+        return ['error']
     out = out.strip()
     if child.returncode != 0 or not out:
         print("{}Ran cmd: df -l".format(INFO))
@@ -208,10 +224,17 @@ def guess_storage_devices():
     boot_devs = get_boot_devices()
     if 'error' in boot_devs:
         return {}
-    print("{}Guess storage devices in localhost".format(INFO))
-    lsblk_cmd = 'lsblk --path -d -o name,rota --json'
-    child = Popen(shlex.split(lsblk_cmd), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    out, err = child.communicate()
+    print("{}Guess testable storage device of localhost".format(INFO))
+    #lsblk_cmd = 'lsblk --path -d -o name,rota --json'
+    lsblk_cmd = 'lsblk --path -o name,rota,mountpoint --json'
+    try:
+        child = Popen(shlex.split(lsblk_cmd), stdin=PIPE, stdout=PIPE,
+                      stderr=PIPE)
+        out, err = child.communicate()
+    except BaseException as e:
+        print("{0}Tried to run cmd '{1}' but ".format(ERRO, lsblk_cmd) +
+              "hit exception: {}".format(e))
+        return {}
     out = out.strip()
     if child.returncode != 0 or not out:
         print("{0}Ran cmd: {1}".format(INFO, lsblk_cmd))
@@ -220,8 +243,8 @@ def guess_storage_devices():
                 err = err.decode()
             print("{0}{1}".format(ERRO, err))
             if 'unrecognized option' in err and '--json' in err:
-                print("{}It seems lsblk version on localhost ".format(ERRO) +
-                      "is too low to support json format")
+                print("{}lsblk version on localhost is too ".format(ERRO) +
+                      "low to support json format")
         print("{}Failed to get storage device from localhost".format(ERRO))
         print("{0}Please manually populate {1}".format(INFO, STORDEV_FL))
         return {}
@@ -231,26 +254,176 @@ def guess_storage_devices():
         lsblk_kv = json.loads(out)
         block_devs = lsblk_kv['blockdevices']
     except BaseException as e:
-        print("{0}Tried to get 'blockdevices' but hit exception: {1}".format(
-              ERRO, e))
+        print("{}Tried to extract 'blockdevices' but ".format(ERRO) +
+              "hit exception: {}".format(e))
         print("{0}Please manually populate {1}".format(INFO, STORDEV_FL))
         return {}
 
-    dev_kv = {}
+    dev_kv = OrderedDict()
     for drive_kv in block_devs:
+        try:
+            devname = drive_kv['name']
+        except KeyError as e:
+            print("{}Tried to extract device name but hit ".format(ERRO) +
+                  "KeyError: {}".format(e))
+            return {}
         if boot_devs:
-            if drive_kv['name'] in boot_devs:
+            if devname in boot_devs:
                 continue
-        if drive_kv['rota'] == '1' and '/dev/sd' in drive_kv['name']:
-            dev_kv.update({drive_kv['name']: 'HDD'})
-        elif drive_kv['rota'] == '0' and '/dev/sd' in drive_kv['name']:
-            dev_kv.update({drive_kv['name']: 'SSD'})
-        elif '/dev/nvme' in drive_kv['name']:
-            dev_kv.update({drive_kv['name']: 'NVME'})
+        if '/dev/sd' in devname or '/dev/nvme' in devname:
+            try:
+                children = drive_kv['children']
+                print("{0}{1} has been partitioned which might be ".format(WARN,
+                      devname) + "used. Ignore it")
+                continue
+            except KeyError:
+                pass
+            try:
+                mntpnt = drive_kv['mountpoint']
+                if mntpnt is not None:
+                    print("{0}{1} has been mounted which might be ".format(WARN,
+                          devname) + "used. Ignore it")
+                    continue
+                dev_rota = drive_kv['rota']
+            except KeyError as e:
+                print("{}Tried to get mounting and rotation ".format(ERRO) +
+                      "information but hit KeyError: {}".format(e))
+                return {}
+            if dev_rota == '1' or dev_rota is True:
+                dev_kv.update({devname: 'HDD'})
+            elif dev_rota == '0' or dev_rota is False:
+                dev_kv.update({devname: 'SSD'})
+            if '/dev/nvme' in devname:
+                dev_kv.update({devname: 'NVME'})
+        elif '/dev/vd' in devname:
+            print("{0}{1} is not supported at this stage".format(WARN, devname))
     if not dev_kv:
-        print("{}It seems localhost has no storage device ".format(ERRO))
-        print("{0}Please manually populate {1}".format(INFO, STORDEV_FL))
+        print("{}Localhost has no testable storage device".format(ERRO))
+        print("{0}Please manually populate {1}. And ".format(INFO, STORDEV_FL) +
+              "do not use '-g' or '--guess-devices' option")
     return dev_kv
+
+
+def check_device(dev, dev_type):
+    """
+    Params:
+        dev: storage device.
+        dev_type: device type.
+    Returns:
+        (dev_ok, dev_size)
+    """
+    if not dev or isinstance(dev, str) is False:
+        print("{}Invalid parameter: dev".format(ERRO))
+        return 'error', ''
+    if not dev_type or isinstance(dev_type, str) is False:
+        print("{}Invalid parameter: dev_type".format(ERRO))
+        return 'error', ''
+    dev = dev.strip()
+    if '/dev/sd' not in dev and '/dev/nvme' not in dev:
+        print("{0}{1} is not supported at this stage".format(ERRO, dev))
+        return 'error', ''
+    dev_type = dev_type.strip()
+    dev_type = dev_type.upper()
+    if dev_type not in ['HDD', 'SSD', 'NVME']:
+        print("{0}{1} device type is not supported at this ".format(ERRO,
+              dev_type) + "stage")
+        return 'error', ''
+    cmd = "lsblk --path -o name,rota,mountpoint,size --json {}".format(dev)
+    try:
+        child = Popen(shlex.split(cmd), stdin=PIPE, stdout=PIPE,
+                      stderr=PIPE)
+        out, err = child.communicate()
+    except BaseException as e:
+        # lsblk might be out of date. Ignore this checking
+        return 'ok', ''
+    out = out.strip()
+    if child.returncode != 0 or not out:
+        print("{0}Ran cmd: {1}".format(INFO, cmd))
+        if err:
+            if isinstance(err, bytes) is True:
+                err = err.decode()
+            print("{0}{1}".format(ERRO, err))
+        print("{0}Failed to get information of {1}".format(ERRO, dev))
+        return 'error', ''
+    if isinstance(out, bytes) is True:
+        out = out.decode()
+    try:
+        lsblk_kv = json.loads(out)
+        block_devs = lsblk_kv['blockdevices']
+    except BaseException as e:
+        print("{0}Tried to get 'blockdevices' of {1} but hit ".format(
+              ERRO, dev) + "exception: {}".format(e))
+        return 'error', ''
+    if len(block_devs) != 1:
+        print("{0}Got incorrect information of {1}".format(ERRO, dev))
+        print("{0}{1}{2}".format(RED, out, RESETCOL))
+        return 1
+    err_cnt = 0
+    warn_cnt = 0
+    for drive_kv in block_devs:
+        if not drive_kv:
+            print("{0}{1} does not exist".format(ERRO, dev))
+            err_cnt += 1
+            continue
+        try:
+            devname = drive_kv['name']
+        except KeyError as e:
+            print("{}Tried to extract device name but hit ".format(ERRO) +
+                  "KeyError: {}".format(e))
+            return 'error', ''
+        devname = devname.strip()
+        if devname != dev:
+            print("{0}Real name of {1} is {2}".format(ERRO, dev, devname))
+            err_cnt += 1
+            continue
+        try:
+            children = drive_kv['children']
+            print("{0}{1} has been partitioned which might ".format(WARN,
+                  dev) + "be used")
+            warn_cnt += 1
+            continue
+        except KeyError:
+            pass
+        sz = ''
+        try:
+            mntpnt = drive_kv['mountpoint']
+            if mntpnt is not None:
+                print("{0}{1} has been mounted which might be ".format(WARN,
+                      dev) + "used")
+                warn_cnt += 1
+                continue
+            dev_rota = drive_kv['rota']
+            sz = drive_kv['size']
+        except KeyError as e:
+            print("{0}Tried to get information of {1} but hit ".format(ERRO,
+                  dev) + "KeyError: {}".format(e))
+            return 'error', ''
+        if '/dev/nvme' not in dev:
+            if dev_rota == '1' or dev_rota is True:
+                if dev_type != 'HDD':
+                    print("{0}Detected {1} is HDD but ".format(ERRO, dev) +
+                          "it was specified as {}".format(dev_type))
+                    err_cnt += 1
+                    continue
+            elif dev_rota == '0' or dev_rota is False:
+                if dev_type != 'SSD':
+                    print("{0}Detected {1} is SSD but ".format(ERRO, dev) +
+                          "it was specified as {}".format(dev_type))
+                    err_cnt += 1
+                    continue
+        else:
+            if dev_type != 'NVME':
+                print("{0}Detected {1} is NVMe but it ".format(ERRO, dev) +
+                      "was specified as {}".format(dev_type))
+                err_cnt += 1
+                continue
+    if err_cnt != 0:
+        return 'error', ''
+    else:
+        if warn_cnt != 0:
+            return 'warn', sz
+        else:
+            return 'ok', sz
 
 
 def ns_to_ms(ns):
@@ -271,7 +444,7 @@ def ns_to_ms(ns):
         return ms
     except BaseException as e:
         sys.exit("{}Tried to convert nanoseconds to milliseconds ".format(QUIT) +
-              "but hit exception: {}\n".format(e))
+                 "but hit exception: {}\n".format(e))
 
 
 def KiB_to_MiB(kib):
@@ -328,15 +501,15 @@ def show_write_warning():
         Exit directly if hit error or data corruption is not allowed.
     """
     print('')
-    print("{}Random write I/O type was enabled. It will ".format(WARN) +
-          "corrupt data on storage devices")
-    print("{}For above devices, double check if Operation ".format(WARN) +
-          "System was NOT installed on")
-    print("{}For above devices, double check if user data ".format(WARN) +
-          "has been backed up")
+    print("{}Random write I/O type was enabled. It will ".format(BOLDRED) +
+          "corrupt data in above storage device list{}".format(RESETCOL))
+    print("{}In above storage device list, double check ".format(BOLDRED) +
+          "that Operation System is NOT installed{}".format(RESETCOL))
+    print("{}In above storage device list, double check ".format(BOLDRED) +
+          "that user data has been backed up{}".format(RESETCOL))
     print('')
-    print("{}Type 'I CONFIRM' to allow data on storage ".format(RED) +
-          "devices to be corrupted. Otherwise, exit{}".format(RESETCOLOR))
+    print("{}Type 'I CONFIRM' to allow data on storage ".format(BOLDRED) +
+          "devices to be corrupted. Otherwise, exit{}".format(RESETCOL))
     try:
         choice = input('Confirm? <I CONFIRM>: ')
     except KeyboardInterrupt as e:
@@ -345,7 +518,7 @@ def show_write_warning():
         print('')
         print("{}Type 'I CONFIRM' again to ensure you ".format(RED) +
               "allow data to be corrupted. Otherwise, exit{}".format(
-              RESETCOLOR))
+              RESETCOL))
         try:
             second_choice = input('Confirm? <I CONFIRM>: ')
         except KeyboardInterrupt as e:
@@ -371,7 +544,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "-g", "--guess-devices",
+        "-g",
+        "--guess-devices",
         action="store_true",
         dest="guess_devices",
         help="guess the storage devices then overwrite them to " +
@@ -381,7 +555,8 @@ def parse_arguments():
         default=False)
 
     parser.add_argument(
-        "-b", "--block-size",
+        "-b",
+        "--block-size",
         action="store",
         dest="block_size",
         help="block size in bytes used for fio I/O units. " +
@@ -393,7 +568,8 @@ def parse_arguments():
         default=DEFAULT_BS)
 
     parser.add_argument(
-        "-j", "--job-per-device",
+        "-j",
+        "--job-per-device",
         action="store",
         dest="job_number",
         help="fio job number for each deivce. For certification, " +
@@ -404,7 +580,8 @@ def parse_arguments():
         default=DEFAULT_NJ)
 
     parser.add_argument(
-        "-t", "--runtime-per-instance",
+        "-t",
+        "--runtime-per-instance",
         action="store",
         dest="fio_runtime",
         help="runtime in second for each fio instance. It should " +
@@ -416,7 +593,8 @@ def parse_arguments():
         default=DEFAULT_RT)
 
     parser.add_argument(
-        "-w", "--random-write",
+        "-w",
+        "--random-write",
         action="store_true",
         dest="randwrite",
         help="use randwrite option to start fio instance instead of " +
@@ -427,7 +605,8 @@ def parse_arguments():
         default=False)
 
     parser.add_argument(
-        "-v", "--version",
+        "-v",
+        "--version",
         action="version",
         version="Storage readiness {0}".format(VERSION))
 
@@ -467,23 +646,24 @@ def show_header():
         0 if succeeded.
     """
     print('')
-    print("{0}Welcome to storage readiness tool, version ".format(GREEN) +
-          "{0}{1}".format(VERSION, RESETCOLOR))
+    print("{0}Welcome to Storage Readiness {1}{2}".format(GREEN, VERSION,
+          RESETCOL))
     print('')
-    print("Please access {0} to get the latest version ".format(GIT_URL) +
-          "or report issue(s)")
+    print("The purpose of this tool is to obtain storage device metrics " +
+          "of localhost then compare them against certain KPIs")
+    print("Please access {} to get required version and report ".format(
+          GIT_URL) + "issue if necessary")
     print('')
-    print("The purpose of this tool is to obtain drive metrics, then " +
-          "compare them against certain KPIs")
-    print('')
-    print("{0}NOTE: This software absolutely comes with no ".format(RED) +
-          "warranty of any kind. Use it at your own risk.{0}".format(RESETCOLOR))
-    print("{0}      The IOPS and latency numbers shown are ".format(RED) +
-          "under special parameters. That is not a generic storage " +
-          "standard.{0}".format(RESETCOLOR))
-    print("{0}      The numbers do not reflect any specification ".format(RED) +
-          "of IBM Storage Scale or any performance number of user's " +
-          "workload.{0}".format(RESETCOLOR))
+    print("{0}NOTE:{1}".format(BOLDRED, RESETCOL))
+    print("{}  This software absolutely comes with no warranty ".format(
+          RED) + "of any kind. Use it at your own risk.{}".format(
+          RESETCOL))
+    print("{}  The IOPS and latency numbers shown are under ".format(RED) +
+          "special parameters. That is not a generic storage standard." +
+          "{}".format(RESETCOL))
+    print("{}  The numbers do not reflect any specification ".format(RED) +
+          "of IBM Storage Scale or any user workload running on it." +
+          "{}".format(RESETCOL))
     print('')
     return 0
 
@@ -518,6 +698,9 @@ class StorageReadiness():
         # Thresholds
         self.__min_runtime = 300
         self.__min_iodepth = 16
+        self.__certify_bs = '128k'
+        self.__certify_job = 1
+        self.__certify_iotp = 'randread'
         # Default fio options
         self.__invalidate = 1
         self.__engine = 'libaio'
@@ -528,7 +711,7 @@ class StorageReadiness():
         self.__offset = 4802187264
         self.__output_format = 'json'
         self.__stordevfile = STORDEV_FL
-        self.__kpifile = os.path.join(BASEDIR, 'randread_128KiB_16iodepth_KPIs.json')
+        self.__kpifile = KPI_FL
         timestr = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         log_dir = os.path.join(BASEDIR, 'log', timestr)
         self.logdir = log_dir
@@ -560,6 +743,9 @@ class StorageReadiness():
         if self._guessdev is True:
             dev_kv = guess_storage_devices()
             if not dev_kv:
+                print("{0}Please manually populate file {1} ".format(INFO,
+                      self.__stordevfile) + "with storage devices of " +
+                      "localhost")
                 return 1
             if os.access(self.__stordevfile, os.W_OK) is False:
                 print("{0}{1} does not have write permission".format(ERRO,
@@ -569,7 +755,7 @@ class StorageReadiness():
             if rc != 0:
                 return 1
         else:
-            print("{0}Extract storage device(s) from {1}".format(INFO,
+            print("{0}Extract storage device from {1}".format(INFO,
                   os.path.basename(self.__stordevfile)))
             rc = is_file_readable(self.__stordevfile)
             if rc != 'yes':
@@ -578,53 +764,74 @@ class StorageReadiness():
             if dev_kv is None:
                 return 1
         if not dev_kv:
-            print("{0}Failed to load storage devices from {1}".format(ERRO,
+            print("{0}Failed to load storage device from {1}".format(ERRO,
                   self.__stordevfile))
+            print("{}Please manually populate the file with ".format(INFO) +
+                  "storage devices of localhost or use '-g' or " +
+                  "'--guess-devices' option")
+            print('')
             return 1
         print('')
-        print("{0}Try to extract storage devices to be tested".format(INFO))
+        print("{0}Extract testable storage device list".format(INFO))
         hdds = []
         ssds = []
         nvms = []
         alldevs = []
-        blk_count = 0
-        none_blk_count = 0
+        type_err_cnt = 0
+        err_cnt = 0
+        warn_cnt = 0
         for dev, dev_type in dev_kv.items():
             devtype = dev_type.upper()
-            if devtype not in ('HDD', 'SSD', 'NVME'):
-                print("{0}'{1}' device type does not supported".format(ERRO,
-                      dev_type))
-                print("{0}Please edit {1} refer to the example file".format(ERRO,
-                      self.__stordevfile))
-                return 1
+            if self._guessdev is False and devtype not in ['HDD', 'SSD', 'NVME']:
+                print("{0}{1} is {2} which device ".format(ERRO, dev, dev_type) +
+                      "type does not supported")
+                type_err_cnt += 1
+                err_cnt += 1
+                continue
             try:
                 isblk = S_ISBLK(os.stat(dev).st_mode)
-            except FileNotFoundError as e:
+            except BaseException as e:
                 print("{0}Tried to get block info of {1} but ".format(ERRO, dev) +
-                      "hit FileNotFoundError: {}".format(e))
-                print("{0}Please review {1}".format(ERRO, self.__stordevfile))
-                return 1
-            if isblk is True:
-                print("{0}{1} {2} is a block device".format(INFO, dev_type, dev))
-                blk_count += 1
-                if devtype == 'HDD':
-                    hdds.append(dev)
-                elif devtype == 'SSD':
-                    ssds.append(dev)
-                elif devtype == 'NVME':
-                    nvms.append(dev)
-                alldevs.append(dev)
+                      "hit exception : {}".format(e))
+                err_cnt += 1
+                continue
+            if isblk is False:
+                print("{0}{1} is NOT a block device".format(ERRO, dev))
+                err_cnt += 1
+                continue
+            state, size = check_device(str(dev), str(dev_type))
+            if state == 'error':
+                err_cnt += 1
+                continue
+            if state == 'warn':
+                warn_cnt += 1
+            if size:
+                print("{0}{1} is {2} and a block device. Its size ".format(INFO, dev,
+                      dev_type) + "is {}".format(size))
             else:
-                print("{0}{1} {2} is NOT a block device".format(INFO, dev_type, dev))
-                none_blk_count += 1
-        if none_blk_count > 0 or blk_count == 0:
-            print("{}None block device found. Please check device(s) ".format(ERRO) +
-                  "in {}".format(self.__stordevfile))
+                print("{0}{1} is {2} and a block device".format(INFO, dev, dev_type))
+            if devtype == 'HDD':
+                hdds.append(dev)
+            elif devtype == 'SSD':
+                ssds.append(dev)
+            elif devtype == 'NVME':
+                nvms.append(dev)
+            alldevs.append(dev)
+        if type_err_cnt != 0:
+            print("{0}Please edit {1} refer to the example file".format(ERRO,
+                  self.__stordevfile))
+        if err_cnt != 0:
+            print("{}Storage device which is not testable has ".format(ERRO) +
+                  "been detected. Please review and edit {}".format(
+                  self.__stordevfile))
             return 1
-        elif blk_count == 1:
-            print("{0}Above storage device is block device".format(INFO))
         else:
-            print("{0}Above storage devices are all block devices".format(INFO))
+            if warn_cnt != 0:
+                print("{0}Above storage device list has ".format(WARN) +
+                      "warning to run test")
+            else:
+                print("{0}Above storage device list is OK ".format(INFO) +
+                      "to be tested")
         print('')
         if hdds:
             self._stor_devs['HDD'] = hdds
@@ -653,10 +860,12 @@ class StorageReadiness():
             return 1
         kpi_kv = load_json(self.__kpifile)
         if kpi_kv is None:
-            print("{0}Failed to load KPIs from {1}".format(ERRO, self.__kpifile))
+            print("{0}Failed to load KPIs from {1}".format(ERRO,
+                  self.__kpifile))
             return 1
         print("{0}Extracted KPIs from {1} with version {2}".format(INFO,
               os.path.basename(self.__kpifile), kpi_kv['json_version']))
+        print('')
         self._kpis = kpi_kv
         return 0
 
@@ -693,8 +902,8 @@ class StorageReadiness():
         total_instancetime = total_runtime + total_ramptime
         total_instance_minutes = int(ceil(total_instancetime / 60.))
         if total_instance_minutes <= 0:
-            print("{}It seems the runtime is too short to estimate ".format(ERRO) +
-                  "total time consumption")
+            print("{}It seems the runtime is too short to ".format(ERRO) +
+                  "estimate total time consumption")
             return -1
         return total_instance_minutes
 
@@ -710,50 +919,62 @@ class StorageReadiness():
         if not estimated_time or isinstance(estimated_time, int) is False:
             print("{}Invalid parameter: estimated_time".format(ERRO))
             return 1
+        print("{}To certify the storage device:".format(INFO))
         if self._runtime >= self.__min_runtime:
-            print("{0}The {1} sec runtime per fio instance is ".format(INFO,
-                  self._runtime) + "sufficient to do storage certification")
+            print("{0}fio needs at least {1} sec runtime per ".format(INFO,
+                  self.__min_runtime) + "instance. Current setting is " +
+                  "{} sec".format(self._runtime))
         else:
-            print("{0}The {1} sec runtime per fio instance is ".format(WARN,
-                  self._runtime) + "not sufficient to certify storage " +
-                  "devices")
-
-        if self._blocksize.lower() == '128k':
-            print("{}The 128KiB blocksize for each I/O unit is ".format(INFO) +
-                  "valid to do storage certification")
+            print("{0}fio needs at least {1} sec runtime per ".format(WARN,
+                  self.__min_runtime) + "instance. Current setting is " +
+                  "{} sec".format(self._runtime))
+        if self._blocksize.lower() == self.__certify_bs.lower():
+            print("{0}fio needs {1} blocksize for each I/O ".format(INFO,
+                  self.__certify_bs) + "unit. Current setting is " +
+                  "{}".format(self._blocksize))
         else:
-            print("{0}The {1} blocksize for each I/O unit is ".format(WARN,
-                  self._blocksize) + "invalid to certify storage devices")
-
-        if self._job_per_dev == 1:
-            print("{}The 1 fio job number for each storage ".format(INFO) +
-                  "device is valid to do storage certification")
+            print("{0}fio needs {1} blocksize for each I/O ".format(WARN,
+                  self.__certify_bs) + "unit. Current setting is " +
+                  "{}".format(self._blocksize))
+        if self._job_per_dev == self.__certify_job:
+            print("{0}fio needs {1} job for each storage device. ".format(
+                  INFO, self.__certify_job) + "Current setting is " +
+                  "{}".format(self._job_per_dev))
         else:
-            print("{0}The {1} fio job number for storage device(s) ".format(WARN,
-                  self._job_per_dev) + "is invalid to certify storage devices")
-
-        if self.iotype == 'randread':
-            print("{0}The {1} I/O type is valid to do storage ".format(INFO,
-                  self.iotype) + "certification")
+            print("{0}fio needs {1} job for each storage device. ".format(
+                  WARN, self.__certify_job) + "Current setting is " +
+                  "{}".format(self._job_per_dev))
+        if self.iotype == self.__certify_iotp:
+            print("{0}fio needs '{1}' I/O type. Current setting ".format(
+                  INFO, self.__certify_iotp) + "is '{}'".format(
+                  self.iotype))
         else:
-            print("{0}The {1} I/O type is invalid ".format(WARN, self.iotype) +
-                  "to certify storage devices")
+            print("{0}fio needs '{1}' I/O type. Current setting ".format(
+                  WARN, self.__certify_iotp) + "is '{0}{1}{2}'".format(
+                  BOLDRED, self.iotype, RESETCOL))
+        if self._isvalid != 'yes':
+            print("{}Input argument is not suitable for ".format(ERRO) +
+                  "storage readiness. However, it can do ordinary " +
+                  "performance test")
+            print("{}This instance will show the performance test ".format(
+                  ERRO) + "result, but will not compare it with any KPI")
+        print('')
+        print("{}The total time consumption of running ".format(INFO) +
+              "this storage readiness instance is estimated to take " +
+              "{0}~{1} minutes{2}".format(PURPLE, estimated_time, RESETCOL))
 
-        print("{}The total time consumption of running this ".format(INFO) +
-              "storage readiness instance is estimated to take " +
-              "{0}~{1} minutes{2}".format(PURPLE, estimated_time, RESETCOLOR))
-
-        print("{}Please check above messages, especially the ".format(INFO) +
-              "storage devices to be tested")
-        print("Type 'yes' to continue testing, 'no' to stop")
+        print("{}Please check above messages, especially ".format(INFO) +
+              "the storage devices to be tested")
+        print("Type 'yes' to continue, 'no' to stop")
         while True:
             try:
                 original_choice = input('Continue? <yes|no>: ')
             except KeyboardInterrupt as e:
                 sys.exit("\n{0}Hit KeyboardInterrupt. Bye!\n".format(QUIT))
             if not original_choice:
-                print("{}Pressing the Enter key does not supported. ".format(RED) +
-                      "Please explicitly type 'yes' or 'no'{}".format(RESETCOLOR))
+                print("{}Pressing the Enter key does not supported. ".format(
+                      RED) + "Please explicitly type 'yes' or 'no'{}".format(
+                      RESETCOL))
                 continue
             choice = original_choice.lower()
             if choice == 'yes':
@@ -763,8 +984,9 @@ class StorageReadiness():
                 sys.exit("{0}Your choice is '{1}'. Bye!\n".format(QUIT,
                          original_choice))
             else:
-                print("{0}Your choice is '{1}'. ".format(RED, original_choice) +
-                      " Type 'yes' to continue, 'no' to stop{}".format(RESETCOLOR))
+                print("{0}Your choice is '{1}'. Type ".format(RED,
+                      original_choice) + "'yes' to continue, 'no' to " +
+                      "stop{}".format(RESETCOL))
                 continue
         print('')
         return 0
@@ -803,9 +1025,9 @@ class StorageReadiness():
         else:
             verb_remark = remark
 
-        print("{0}Start fio instance with {1} I/O type, {2} I/O ".format(INFO,
-              self.iotype, self._blocksize) + "blocksize, {} ".format(
-              numjobs) + "job(s), against {0}, runtime {1} sec, ".format(
+        print("{0}Start fio instance with {1} I/O type, {2} I/O ".format(
+              INFO, self.iotype, self._blocksize) + "blocksize, " +
+              "{0} job(s), against {1}, runtime {2} sec, ".format(numjobs,
               verb_remark, self._runtime) + "ramp time {} sec".format(
               self.__ramp_time))
         print("{}Please wait for the instance to complete".format(INFO))
@@ -829,8 +1051,14 @@ class StorageReadiness():
             "--output-format={} ".format(self.__output_format) + \
             "--output={0}/{1}.json".format(self.logdir, name)
 
-        child = Popen(shlex.split(fio_cmd), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        out, err = child.communicate()
+        try:
+            child = Popen(shlex.split(fio_cmd), stdin=PIPE, stdout=PIPE,
+                          stderr=PIPE)
+            out, err = child.communicate()
+        except BaseException as e:
+            print("{}Tried to run fio cmd but hit exception: ".format(
+                  ERRO) + "{}".format(e))
+            return 1
         if child.returncode != 0:
             print("{0}Failed to run cmd: {1}".format(ERRO, fio_cmd))
             if err:
@@ -843,8 +1071,8 @@ class StorageReadiness():
                 out = out.decode()
             print("{0}{1}".format(INFO, out))
         print("{0}{1} fio instance with {2} I/O blocksize, ".format(INFO,
-              self.iotype, self._blocksize) + "against {0}, ".format(verb_remark) +
-              "has completed")
+              self.iotype, self._blocksize) + "against {0}, ".format(
+              verb_remark) + "has completed")
         return 0
 
     def run_single_dev_tests(self):
@@ -869,7 +1097,7 @@ class StorageReadiness():
 
         for dev in alldevs:
             remark = dev.split('/')[-1]
-            rc = self.run_fio_instance(dev, remark)
+            rc = self.run_fio_instance(str(dev), str(remark))
             if rc != 0:
                 print("{0}Hit error while running test against {1}".format(ERRO,
                       dev))
@@ -899,7 +1127,7 @@ class StorageReadiness():
                 return 1
             if len(devs) > 1:
                 dev_to_test = ':'.join(devs)
-                rc = self.run_fio_instance(dev_to_test, devtype)
+                rc = self.run_fio_instance(str(dev_to_test), str(devtype))
                 if rc != 0:
                     print("{0}Failed to run test against all {1} ".format(ERRO,
                           devtype) + "storage devices")
@@ -930,8 +1158,8 @@ class StorageReadiness():
         elif self.iotype == 'randread':
             rwstr = 'read'
         else:
-            print("{0}{1} I/O type does not supported currently".format(ERRO,
-                  self.iotype))
+            print("{0}{1} I/O type does not supported currently".format(
+                  ERRO, self.iotype))
             return 1
 
         try:
@@ -954,8 +1182,8 @@ class StorageReadiness():
             try:
                 drop_ios = json_obj['jobs'][0][rwstr]['drop_ios']
             except KeyError as e:
-                print("{}Tried to extract drop_ios but hit KeyError: ".format(ERRO) +
-                      "{}".format(e))
+                print("{}Tried to extract drop_ios but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
                 return 1
             perf_kv[name]['drop_ios'] = int(drop_ios)
             # IOPS
@@ -972,8 +1200,10 @@ class StorageReadiness():
                 perf_kv[name]['iops'] = {}
                 perf_kv[name]['iops']['general'] = float("{:.2f}".format(iops))
                 perf_kv[name]['iops']['min'] = float("{:.2f}".format(iops_min))
-                perf_kv[name]['iops']['mean'] = float("{:.2f}".format(iops_mean))
-                perf_kv[name]['iops']['stddev'] = float("{:.2f}".format(iops_stddev))
+                perf_kv[name]['iops']['mean'] = float("{:.2f}".format(
+                                                iops_mean))
+                perf_kv[name]['iops']['stddev'] = float("{:.2f}".format(
+                                                  iops_stddev))
             except BaseException as e:
                 print("{}Tried to save IOPS numbers but hit ".format(ERRO) +
                       "KeyError: {}".format(e))
@@ -985,8 +1215,8 @@ class StorageReadiness():
                 clat_mean = json_obj['jobs'][0][rwstr]['clat_ns']['mean']
                 clat_stddev = json_obj['jobs'][0][rwstr]['clat_ns']['stddev']
             except KeyError as e:
-                print("{}Tried to extract latency numbers but hit ".format(ERRO) +
-                      "KeyError: {}".format(e))
+                print("{}Tried to extract latency numbers but ".format(ERRO) +
+                      "hit KeyError: {}".format(e))
                 return 1
             try:
                 perf_kv[name]['clat'] = {}
@@ -1004,8 +1234,8 @@ class StorageReadiness():
                     bw_min = json_obj['jobs'][0][rwstr]['bw_min']
                     bw_mean = json_obj['jobs'][0][rwstr]['bw_mean']
                 except KeyError as e:
-                    print("{}Tried to extract BW numbers but hit ".format(ERRO) +
-                          "KeyError: {}".format(e))
+                    print("{}Tried to extract BW numbers but ".format(ERRO) +
+                          "hit KeyError: {}".format(e))
                     return 1
                 try:
                     perf_kv[name]['bw'] = {}
@@ -1019,8 +1249,8 @@ class StorageReadiness():
                     return 1
 
         if not perf_kv:
-            print("{}Failed to extract performance numbers from fio ".format(ERRO) +
-                  "output file in {}".format(self.logdir))
+            print("{}Failed to extract performance numbers ".format(ERRO) +
+                  "from fio output file in {}".format(self.logdir))
             return 1
         self._sing_perf = perf_kv
         return 0
@@ -1077,8 +1307,8 @@ class StorageReadiness():
             try:
                 drop_ios = json_obj['jobs'][0][rwstr]['drop_ios']
             except KeyError as e:
-                print("{}Tried to extract drop_ios but hit KeyError: ".format(ERRO) +
-                      "{}".format(e))
+                print("{}Tried to extract drop_ios but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
                 return 1
             perf_kv[name]['drop_ios'] = int(drop_ios)
             # IOPS
@@ -1095,11 +1325,13 @@ class StorageReadiness():
                 perf_kv[name]['iops'] = {}
                 perf_kv[name]['iops']['general'] = float("{:.2f}".format(iops))
                 perf_kv[name]['iops']['min'] = float("{:.2f}".format(iops_min))
-                perf_kv[name]['iops']['mean'] = float("{:.2f}".format(iops_mean))
-                perf_kv[name]['iops']['stddev'] = float("{:.2f}".format(iops_stddev))
+                perf_kv[name]['iops']['mean'] = float("{:.2f}".format(
+                                                iops_mean))
+                perf_kv[name]['iops']['stddev'] = float("{:.2f}".format(
+                                                  iops_stddev))
             except BaseException as e:
-                print("{}Tried to save IOPS numbers but hit KeyError: ".format(ERRO) +
-                      "{}".format(e))
+                print("{}Tried to save IOPS numbers but hit ".format(ERRO) +
+                      "KeyError: {}".format(e))
                 return 1
             # Latency
             try:
@@ -1108,8 +1340,8 @@ class StorageReadiness():
                 clat_mean = json_obj['jobs'][0][rwstr]['clat_ns']['mean']
                 clat_stddev = json_obj['jobs'][0][rwstr]['clat_ns']['stddev']
             except KeyError as e:
-                print("{}Tried to extract latency numbers but hit ".format(ERRO) +
-                      "KeyError: {}".format(e))
+                print("{}Tried to extract latency numbers but ".format(ERRO) +
+                      "hit KeyError: {}".format(e))
                 return 1
             try:
                 perf_kv[name]['clat'] = {}
@@ -1118,8 +1350,8 @@ class StorageReadiness():
                 perf_kv[name]['clat']['mean'] = ns_to_ms(clat_mean)
                 perf_kv[name]['clat']['stddev'] = ns_to_ms(clat_stddev)
             except KeyError as e:
-                print("{}Tried to save latency numbers but hit ".format(ERRO) +
-                      "KeyError: {}".format(e))
+                print("{}Tried to save latency numbers but ".format(ERRO) +
+                      "hit KeyError: {}".format(e))
                 return 1
             if self._blocksize in ['1m', '2m']:
                 # Bandwidth
@@ -1127,23 +1359,23 @@ class StorageReadiness():
                     bw_min = json_obj['jobs'][0][rwstr]['bw_min']
                     bw_mean = json_obj['jobs'][0][rwstr]['bw_mean']
                 except KeyError as e:
-                    print("{}Tried to extract BW numbers but hit ".format(ERRO) +
-                          "KeyError: {}".format(e))
+                    print("{}Tried to extract BW numbers but ".format(ERRO) +
+                          "hit KeyError: {}".format(e))
                     return 1
                 try:
                     perf_kv[name]['bw'] = {}
-                    perf_kv[name]['bw']['min'] = "{:.2f} MiB/s".format(KiB_to_MiB(
-                                                 bw_min))
-                    perf_kv[name]['bw']['mean'] = "{:.2f} MiB/s".format(KiB_to_MiB(
-                                                  bw_mean))
+                    perf_kv[name]['bw']['min'] = \
+                        "{:.2f} MiB/s".format(KiB_to_MiB(bw_min))
+                    perf_kv[name]['bw']['mean'] = \
+                        "{:.2f} MiB/s".format(KiB_to_MiB(bw_mean))
                 except BaseException as e:
                     print("{}Tried to save BW numbers but hit ".format(ERRO) +
                           "KeyError: {}".format(e))
                     return 1
 
         if not perf_kv:
-            print("{}Failed to extract performance numbers from ".format(ERRO) +
-                  "fio output file in {}".format(self.logdir))
+            print("{}Failed to extract performance numbers ".format(ERRO) +
+                  "from fio output file in {}".format(self.logdir))
             return 1
         self._mult_perf = perf_kv
         return 0
@@ -1275,9 +1507,9 @@ class StorageReadiness():
                       name) + "but hit KeyError: {}".format(e))
                 return 1
             if drop_ios > drop_ios_kpi:
-                print("{0}{1} has {2} drop I/O(s) which is over the ".format(ERRO,
-                      devtype, drop_ios) + "required {} ".format(drop_ios_kpi) +
-                      "drop I/O KPI of {}".format(devtype))
+                print("{0}{1} has {2} drop I/O(s) which is over the ".format(
+                      ERRO, devtype, drop_ios) + "required {} ".format(
+                      drop_ios_kpi) + "drop I/O KPI of {}".format(devtype))
                 err_cnt += 1
             else:
                 print("{0}{1} has {2} drop I/O(s) which meets the ".format(INFO,
@@ -1286,9 +1518,10 @@ class StorageReadiness():
             min_iops /= devnum
             min_iops = float("{:.2f}".format(min_iops))
             if min_iops < min_iops_kpi:
-                print("{0}{1} has {2} average minimum IOPS which is ".format(ERRO,
-                      devtype, min_iops) + "below the required {} ".format(
-                      min_iops_kpi) + "minimum IOPS KPI of {}".format(devtype))
+                print("{0}{1} has {2} average minimum IOPS which is ".format(
+                      ERRO, devtype, min_iops) + "below the required " +
+                      "{0} minimum IOPS KPI of {1}".format(min_iops_kpi,
+                      devtype))
                 err_cnt += 1
             else:
                 print("{0}{1} has {2} average minimum IOPS which ".format(INFO,
@@ -1400,8 +1633,8 @@ class StorageReadiness():
                 max_clat = val['clat']['max']
                 mean_clat = val['clat']['mean']
             except KeyError as e:
-                print("{0}Tried to get performance number of {1} ".format(ERRO, key) +
-                      "but hit KeyError: {}".format(e))
+                print("{0}Tried to get performance number of {1} ".format(ERRO,
+                      key) + "but hit KeyError: {}".format(e))
                 return 1
             print("{0}{1} has {2} {3} drop I/O(s)".format(INFO, key, drop_ios,
                   self.iotype))
@@ -1442,7 +1675,8 @@ class StorageReadiness():
                   "from {0} but hit KeyError: {1}".format(self._kpis, e))
             return 1
 
-        print("{}Define difference percentage as 100 * (max - min) / max".format(INFO))
+        print("{}Define difference percentage as 100 * (max - min) ".format(INFO) +
+              "/ max")
         print("{}Check if difference percentage of IOPS and latency ".format(INFO) +
               "meets the KPI")
         print('')
@@ -1451,13 +1685,15 @@ class StorageReadiness():
             try:
                 devs = self._stor_devs[devtype]
             except KeyError as e:
-                print("{}Tried to extract certain type of device from ".format(ERRO) +
-                      "{0} but hit KeyError: {1}".format(self._stor_devs, e))
+                print("{}Tried to extract certain type of device ".format(ERRO) +
+                      "from {0} but hit KeyError: {1}".format(self._stor_devs, e))
                 return 1
             dev_len = len(devs)
-            if dev_len  < 2:
-                print("{0}{1} device number is not enough to ".format(INFO, devtype) +
-                      "do difference percentage checking")
+            if dev_len < 1:
+                continue
+            if dev_len == 1:
+                print("{0}{1} device number is not enough to do ".format(INFO,
+                      devtype) + "difference percentage checking")
                 print('')
                 continue
             mean_iopses = []
@@ -1468,21 +1704,21 @@ class StorageReadiness():
                     mean_iops = self._sing_perf[name]['iops']['mean']
                     mean_clat = self._sing_perf[name]['clat']['mean']
                 except KeyError as e:
-                    print("{0}Tried to extract mean numbers of {1} but ".format(ERRO,
-                          name) + "hit KeyError: {}".format(e))
+                    print("{0}Tried to extract mean numbers of {1} ".format(ERRO,
+                          name) + "but hit KeyError: {}".format(e))
                     return 1
                 mean_iopses.append(mean_iops)
                 mean_clats.append(mean_clat)
 
             if len(mean_iopses) != dev_len:
-                print("{0}Length of mean IOPS list of {1} is incorrect".format(ERRO,
-                      devtype))
+                print("{0}Length of mean IOPS list of {1} is ".format(ERRO,
+                      devtype) + "incorrect")
                 print('')
                 err_cnt += 1
                 continue
             if len(mean_clats) != dev_len:
-                print("{0}Length of mean latency list of {1} is incorrect".format(ERRO,
-                      devtype))
+                print("{0}Length of mean latency list of {1} is ".format(ERRO,
+                      devtype) + "incorrect")
                 print('')
                 err_cnt += 1
                 continue
@@ -1499,23 +1735,27 @@ class StorageReadiness():
                 continue
 
             if iops_diff_pct > diff_pct_kpi:
-                print("{0}All {1}s have {2}% difference of IOPS ".format(INFO, devtype,
-                      iops_diff_pct) + "which is over required {}% maximum ".format(
-                      diff_pct_kpi) + "difference percentage KPI")
+                print("{0}All {1}s have {2}% difference of IOPS ".format(INFO,
+                      devtype, iops_diff_pct) + "which is over required " +
+                      "{}% maximum ".format(diff_pct_kpi) + "difference " +
+                      "percentage KPI")
                 err_cnt += 1
             else:
-                print("{0}All {1}s have {2}% difference of IOPS ".format(INFO, devtype,
-                      iops_diff_pct) + "which meets required {}% maximum ".format(
-                      diff_pct_kpi) + "difference percentage KPI")
+                print("{0}All {1}s have {2}% difference of IOPS ".format(INFO,
+                      devtype, iops_diff_pct) + "which meets required " +
+                      "{}% maximum ".format(diff_pct_kpi) + "difference " +
+                      "percentage KPI")
             if clat_diff_pct > diff_pct_kpi:
-                print("{0}All {1}s have {2}% difference of latency which ".format(INFO,
-                      devtype, clat_diff_pct) + "is over required {}% maximum ".format(
-                      diff_pct_kpi) + "difference percentage KPI")
+                print("{0}All {1}s have {2}% difference of latency ".format(
+                      INFO, devtype, clat_diff_pct) + "which is over " +
+                      "required {}% maximum ".format(diff_pct_kpi) +
+                      "difference percentage KPI")
                 err_cnt += 1
             else:
-                print("{0}All {1}s have {2}% difference of latency which ".format(INFO,
-                      devtype, clat_diff_pct) + "meets required {}% maximum ".format(
-                      diff_pct_kpi) + "difference percentage KPI")
+                print("{0}All {1}s have {2}% difference of latency ".format(
+                      INFO, devtype, clat_diff_pct) + "which meets " +
+                      "required {}% maximum ".format(diff_pct_kpi) +
+                      "difference percentage KPI")
             print('')
         return err_cnt
 
@@ -1536,20 +1776,20 @@ class StorageReadiness():
                 kpi_chk_err_cnt += 1
             comp_rc = self.compare_peers()
             if comp_rc == 0:
-                print("{}All types of storage devices passed the KPI ".format(INFO) +
-                      "check")
+                print("{}All types of storage devices passed the ".format(INFO) +
+                      "KPI check")
             else:
                 kpi_chk_err_cnt += 1
-                print("{}Not all types of storage devices passed the ".format(INFO) +
-                      "KPI check")
+                print("{}Not all types of storage devices passed ".format(INFO) +
+                      "the KPI check")
             print('')
             if kpi_chk_err_cnt == 0:
-                print("{}All storage devices are ready to run the ".format(INFO) +
-                      "next procedure\n")
+                print("{}Storage device of this host is ready to ".format(INFO) +
+                      "run the next procedure\n")
                 return 0
             else:
-                print("{}*NOT* all storage devices are ready. Storage ".format(ERRO) +
-                      "devices in this host *CANNOT* be used by IBM Storage Scale\n")
+                print("{}*NOT* all storage devices passed the KPI ".format(ERRO) +
+                      "check. This host *CANNOT* be used by IBM Storage Scale\n")
                 return 1
         else:
             err_cnt = 0
@@ -1558,12 +1798,11 @@ class StorageReadiness():
             mult_rc = self.show_multiple_dev_results_if_invalid()
             err_cnt += mult_rc
             if err_cnt == 0:
-                print("{}Performance of storage devices in this host ".format(ERRO) +
-                      "have been tested. But this test instance is *invalid*\n")
+                print("{}Storage device performance of this host ".format(ERRO) +
+                      "has been tested. But this test instance is *invalid*")
             else:
-                print("{}Storage devices in this host did not look ".format(ERRO) +
-                      "good. Storage devices on this host *CANNOT* be used by IBM " +
-                      "Storage Scale\n")
+                print("{}Storage device of this host did not look ".format(ERRO) +
+                      "good. This host *CANNOT* be used by IBM Storage Scale\n")
             return 1
 
 
@@ -1584,6 +1823,13 @@ def main():
     if rc != 0:
         sys.exit("{}Bye!\n".format(QUIT))
 
+    # fio can be installed from resouce code or rpm package
+    rc = is_fio_available()
+    if rc != 0:
+        sys.exit("{0}fio benchmark should be available for ".format(QUIT) +
+                 "storage readiness test\n")
+    print('')
+
     rc = sr.initialize_storage_devices()
     if rc != 0:
         sys.exit("{}Bye!\n".format(QUIT))
@@ -1602,12 +1848,6 @@ def main():
     if sr.iotype == 'randwrite':
         show_write_warning()
 
-    # fio can be installed from resouce code or rpm package
-    rc = is_fio_available()
-    if rc != 0:
-        sys.exit("{0}Please ensure fio is installed and environment ".format(QUIT) +
-                 "variable is exported\n")
-
     # Create LOG directory
     try:
         os.makedirs(sr.logdir)
@@ -1622,13 +1862,13 @@ def main():
 
     rc = sr.run_multilpe_dev_tests()
     if rc != 0:
-        sys.exit("{}Failed to run test against multiple storage devices\n".format(
-                 QUIT))
+        sys.exit("{}Failed to run test against multiple storage ".format(QUIT) +
+                 "devices\n")
 
     rc = sr.extract_single_dev_result()
     if rc != 0:
-        sys.exit("{}Failed to extract result for single storage device\n".format(
-                 QUIT))
+        sys.exit("{}Failed to extract result for single storage ".format(QUIT) +
+                 "device\n")
 
     rc = sr.extract_mult_dev_result()
     if rc != 0:
@@ -1639,4 +1879,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
