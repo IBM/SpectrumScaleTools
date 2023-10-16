@@ -1,7 +1,0 @@
-{
-  "json_version": "1.0",
-  "librdmacm": 0,
-  "librdmacm-utils": 0,
-  "rdma-core-devel": 0,
-  "ibutils2": 0
-}

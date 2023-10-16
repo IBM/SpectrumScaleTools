@@ -1,15 +1,20 @@
-#!/usr/bin/python
+"""
+This module can perform fping and nsdperf tests against a set of hosts' network.
+It compares the test results with Key Performance Indicators (KPI) then
+determines if the network of the hosts is ready for Storage Scale ECE.
+"""
+
 import json
 import os
 import sys
 import socket
 import datetime
-import subprocess
 import platform
 import shlex
 import time
+from subprocess import Popen, PIPE, call, STDOUT
 from shutil import copyfile
-from decimal import Decimal
+from collections import OrderedDict
 import argparse
 import operator
 from math import sqrt, ceil
@@ -18,34 +23,37 @@ import re
 import csv
 
 # This script version, independent from the JSON versions
-VERSION = "1.21"
+VERSION = "1.30"
 
 # Colorful constants
 RED = '\033[91m'
-BOLDRED = '\033[91;1m'
 GREEN = '\033[92m'
 YELLOW = '\033[93m'
 PURPLE = '\033[35m'
 GOLDEN = '\033[33m'
+BOLDRED = '\033[91;1m'
 BOLDGOLDEN = '\033[33;1m'
-NOCOLOR = '\033[0m'
+RESETCOL = '\033[0m'
 
-INFO = "{0}INFO:{1} ".format(GREEN, NOCOLOR)
-WARN = "{0}WARNING: {1}".format(YELLOW, NOCOLOR)
-ERRO = "{0}FATAL:{1} ".format(RED, NOCOLOR)
-QUIT = "{0}QUIT: {1}".format(RED, NOCOLOR)
+INFO = "[ {0}INFO{1}  ] ".format(GREEN, RESETCOL)
+WARN = "[ {0}WARN{1}  ] ".format(YELLOW, RESETCOL)
+ERRO = "[ {0}FATAL{1} ] ".format(RED, RESETCOL)
+QUIT = "[ {0}QUIT{1}  ] ".format(RED, RESETCOL)
 
 # KPI and acceptance values
 KPI_AVG_LATENCY = 1.00 # 1 msec or less
 KPI_MAX_LATENCY = 2.00
-KPI_STDDEV_LTNC = KPI_AVG_LATENCY / 3.0
+KPI_STDDEV_LAT = float("{:.2f}".format(KPI_AVG_LATENCY / 3.0))
 KPI_NSD_THROUGH = 2000 # 2000 MB/s or more, with lots of margin
+KPI_DIFF_PCT = 20.0
 ACC_FPING_COUNT = 500 # 500 or more
 ACC_TESTER_THRE = 32 # fixed 32
-ACC_BUFFER_SIZE = 2 * 1024 * 1024 # fixed 2M
+ACC_BUFFSIZE = 2 * 1024 * 1024 # fixed 2M
 ACC_TTIME = 1200 # 1200 or more
 
 # TODO Move following global variables to json file
+MIN_HOST_NUM = 2
+MAX_HOST_NUM = 64
 # Minimum fping count
 MIN_FPING_COUNT = 2
 # Tester threads form nsdperf
@@ -63,97 +71,146 @@ MAX_BUFFSIZE = 16 * 1024 * 1024
 # GITHUB URL
 GIT_URL = "https://github.com/IBM/SpectrumScaleTools"
 
-NSDPERF = "nsdperfTool.py"
+NSDTOOL = "nsdperfTool.py"
+DEPE_PKG = "packages.json"
+HOST_FL = "hosts.json"
 
 # IP RE
 IPPATT = re.compile('.*inet\s+(?P<ip>.*)\/\d+')
 
-# devnull redirect destination
-DEVNULL = open(os.devnull, 'w')
-
+PYTHON2 = False
 try:
-    raw_input      # Python 2
-    PYTHON3 = False
-except NameError:  # Python 3
-    raw_input = input
-    PYTHON3 = True
+    input = raw_input
+    PYTHON2 = True
+except NameError:
+    PYTHON2 = False
 
-if PYTHON3:
+if PYTHON2 is False:
     import statistics
+
+
+def load_json(json_file):
+    """
+    Params:
+        json_file: a file path string with json format.
+    Returns:
+        Python Dictionary object load from json file.
+        None if hit error.
+    """
+    if not json_file or isinstance(json_file, str) is False:
+        print("{}Invalid parameter: json_file".format(ERRO))
+        return None
     try:
-        import distro
-    except ImportError:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot import distro. Check python3-distro is installed\n")
+        with open(json_file, 'r') as fh:
+            dict_obj = json.load(fh, object_pairs_hook=OrderedDict)
+            if not dict_obj:
+                print("{0}Tried to load JSON file {1} but got ".format(ERRO,
+                      json_file) + "nothing")
+                return None
+            return dict_obj
+    except Exception as e:
+        print("{0}Tried to load JSON file {1} but hit ".format(ERRO,
+              json_file) + "exception: {}".format(e))
+        return None
 
 
-def load_json(json_file_str):
-    # Loads  JSON into a dictionary or quits the program if it cannot. Future
-    # might add a try to donwload the JSON if not available before quitting
+def dump_json(src_kv, dst_file):
+    """
+    Params:
+        src_kv: Python dictionay object to be recorded.
+        dst_file: a file path used to save Python dictionay object.
+    Returns:
+        0 if succeeded.
+        1 if hit error.
+    """
+    if not src_kv or isinstance(src_kv, dict) is False:
+        print("{}Invalid parameter: src_kv".format(ERRO))
+        return 1
+    if not dst_file or isinstance(dst_file, str) is False:
+        print("{}Invalid parameter: dst_file".format(ERRO))
+        return 1
+
     try:
-        with open(json_file_str, "r") as json_file:
-            json_variable = json.load(json_file)
-            return json_variable
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot open JSON file: " + json_file_str)
+        src_data = json.dumps(src_kv, indent=4)
+        with open(dst_file, 'w') as fh:
+            fh.write(src_data)
+        return 0
+    except Exception as e:
+        print("{0}Tried to [over]write file {1} but ".format(ERRO,
+              dst_file) + "hit exception: {}\n".format(e))
+        return 1
 
 
-def json_file_loads(json_file_str):
-    # We try to load the JSON and return the success of failure
-    try:
-        with open(json_file_str, "r") as json_file_test:
-            json_variable = json.load(json_file_test)
-            json_file_test.close()
-            json_loads = True
-    except Exception:
-        json_loads = False
-    return json_loads
-
-
-def write_json_file_from_dictionary(hosts_dictionary, json_file_str):
-    # We are going to generate or overwrite the hosts JSON file
-    try:
-        with open(json_file_str, "w") as json_file:
-            json.dump(hosts_dictionary, json_file)
-            print(GREEN + "OK: " + NOCOLOR + "JSON file: " + json_file_str +
-                  " [over]written")
-
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot write JSON file: " + json_file_str)
-
-
-def check_localnode_is_in(hosts_dictionary):
+def check_localhost_is_in_hosts(hosts):
+    """
+    Params:
+        hosts: hostname list.
+    Returns:
+        0 if localhost is in hosts.
+        exit if hit error or localhost was not in hosts.
+    """
+    if not hosts or isinstance(hosts, list) is False:
+        print("{}Invalid parameter: hosts".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
     localNode = None
     try:
         raw_out = os.popen("ip addr show").read()
-    except BaseException:
-        sys.exit(RED + "QUIT: " + NOCOLOR + "cannot list ip " +
-                 "address on local node\n")
-    # create a list of allip addresses for local node
-    iplist = IPPATT.findall(raw_out)
+    except BaseException as e:
+        print("{}Tried to get IP addresses of localhost ".format(ERRO) +
+              "but hit exception: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    ips = IPPATT.findall(raw_out)
 
     # check for match with one of input ip addresses
-    for node in hosts_dictionary.keys():
-        if node in iplist:
-            localNode = node
-            break
-    if localNode is None:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Local node is not part of the test\n")
+    if any(i for i in hosts if i in ips) is False:
+        print("{0}localhost is not in hosts: {1}".format(ERRO, hosts))
+        sys.exit("{}Bye!\n".format(QUIT))
+    else:
+        return 0
 
 
-def estimate_runtime(hosts_dictionary, fp_count, ttime_per_inst):
-    number_of_hosts = len(hosts_dictionary)
-    estimated_rt_fp = number_of_hosts * fp_count
-    # use number of hosts + 1 to include N:N iteration of nsdperf
-    # add 20 sec per node as startup, shutdown, compile overhead
-    estimated_rt_perf = (number_of_hosts + 1) * (20 + ttime_per_inst)
-    estimated_runtime = estimated_rt_fp + estimated_rt_perf
-    # minutes we always return 2 even for short test runs
-    estimated_runtime_minutes = int(ceil(estimated_runtime / 60.))
-    return max(estimated_runtime_minutes, 2)
+def estimate_runtime(
+        hosts,
+        fp_count,
+        ttime_per_inst):
+    """
+    Params:
+        hosts: hostname list.
+        fp_count: count of fping packet.
+        ttime_per_inst: test time perf nsdperf instance.
+    Returns:
+        0 if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: hosts".format(ERRO))
+    if not fp_count or isinstance(fp_count, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fp_count".format(ERRO))
+    if not ttime_per_inst or isinstance(ttime_per_inst, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: ttime_per_inst".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    host_num = len(hosts)
+    fping_rt = host_num * fp_count
+    # add 20 extra seconds per nsdperf instance for overhead(compile,
+    # startup, shutdown, etc.)
+    o2m_nsdperf_rt = host_num * (ttime_per_inst + 20)
+    m2m_nsdperf_rt = ttime_per_inst + 20
+
+    estimated_rt = fping_rt + o2m_nsdperf_rt + m2m_nsdperf_rt
+    runtime_in_m = int(estimated_rt / 60.0)
+
+    print("{}The total time consumption of running ".format(INFO) +
+          "this network readiness instance is estimated to take " +
+          "at least {0}{1} minutes{2}".format(PURPLE, runtime_in_m,
+          RESETCOL))
+    return 0
 
 
 def parse_arguments():
@@ -162,8 +219,8 @@ def parse_arguments():
         '--hosts',
         action='store',
         dest='hosts',
-        help='IPv4 addresses in CSV format. E.g., IP0,IP1,IP2,IP3',
-        metavar='HOSTS_CSV',
+        help='IPv4 addresses in CSV format. E.g., IP0,IP1,...',
+        metavar='CSV_IPV4',
         type=str,
         default="")
     parser.add_argument(
@@ -171,15 +228,15 @@ def parse_arguments():
         '--save-hosts',
         action='store_true',
         dest='save_hosts',
-        help='[Over]write hosts.json with IP addresses that passed ' +
-        'the check and followed option: --hosts',
+        help='[Over]write {} with IP addresses '.format(HOST_FL) +
+        'followed --hosts',
         default=False)
     parser.add_argument(
         '-c',
         '--fping-count',
         action='store',
         dest='fping_count',
-        help='count of request packets to send to each target. The ' +
+        help='count of fping packets to send to each target. The ' +
         'minimum value can be set to {} packets for quick '.format(
         MIN_FPING_COUNT) + 'test. For certification, it is at ' +
         'least {} '.format(ACC_FPING_COUNT) + 'packets',
@@ -188,11 +245,11 @@ def parse_arguments():
         default=500)
     parser.add_argument(
         '-t',
-        '--ttime-per-instance',
+        '--test-time',
         action='store',
         dest='ttime_per_inst',
-        help='test time per nsdperf instance with unit sec. The ' +
-        'minimum value can be set to 10 sec for quick test. For ' +
+        help='test time per nsdperf instance in sec. The minimum ' +
+        'value can be set to 10 sec for quick test. For ' +
         'certification, it is at least {} sec'.format(ACC_TTIME),
         metavar='TIME',
         type=int,
@@ -203,8 +260,8 @@ def parse_arguments():
         action='store',
         dest='test_thread',
         help='test thread number per nsdperf instance on client. ' +
-        'The minimum value is 1 and the maximum value is {}. '.format(
-        MAX_TESTERS) + 'For certification, it is {}'.format(
+        'The minimum value is 1 and the maximum value is ' +
+        '{0}. For certification, it is {1}'.format(MAX_TESTERS,
         ACC_TESTER_THRE),
         metavar='THREAD',
         type=int,
@@ -214,9 +271,10 @@ def parse_arguments():
         '--parallel',
         action='store',
         dest='para_conn',
-        help='parallel socket connections of nsdperf per instance. ' +
-        'The minimum value is 1 and the maximum value is {}. '.format(
-        MAX_PARALLEL) + 'Default value is {}'.format(DEF_PARALLEL),
+        help='parallel socket connections of nsdperf per ' +
+        'instance. The minimum value is 1 and the maximum value ' +
+        'is {0}. Default value is {1}'.format(MAX_PARALLEL,
+        DEF_PARALLEL),
         metavar='PARALLEL',
         type=int,
         default=DEF_PARALLEL)
@@ -225,49 +283,39 @@ def parse_arguments():
         '--buffer-size',
         action='store',
         dest='buff_size',
-        help='buffer size for each I/O of nsdperf with unit bytes. The ' +
-        'minimum value is {0} bytes and the maximum value is {1} '.format(
-        MIN_BUFFSIZE, MAX_BUFFSIZE) + 'bytes. For certification, it is ' +
-        '{} bytes'.format(ACC_BUFFER_SIZE),
+        help='buffer size for each I/O of nsdperf in byte ' +
+        'The minimum value is {} bytes '.format(MIN_BUFFSIZE) +
+        'and the maximum value is {} bytes. '.format(MAX_BUFFSIZE) +
+        'For certification, it is {} bytes'.format(ACC_BUFFSIZE),
         metavar='BUFFSIZE',
         type=int,
-        default=ACC_BUFFER_SIZE)
+        default=ACC_BUFFSIZE)
     parser.add_argument(
         '-o',
         '--socket-size',
         action='store',
         dest='socket_size',
-        help='maximum TCP socket send and receive buffer size with ' +
-        'unit bytes. 0 means the system default setting and the ' +
-        'maximum value is {} bytes. This tool would set the '.format(
-        MAX_SOCKSIZE) + 'socket size to the I/O buffer size if socket ' +
-        'size was not specified explicitly',
+        help='maximum socket send and receive buffer size in ' +
+        'byte. 0 means the system default setting. The maximum ' +
+        'value is {} bytes. This tool '.format(MAX_SOCKSIZE) +
+        'implicitly sets the socket size to the I/O buffer size ' +
+        'if socket size was not specified',
         metavar='SOCKSIZE',
         type=int,
-        default=ACC_BUFFER_SIZE)
+        default=ACC_BUFFSIZE)
     parser.add_argument(
         '--rdma',
         action='store',
         dest='rdma',
-        help='Enable RDMA check and assign ports in CSV format. E.g., ' +
-        'ib0,ib1. Use logical device name rather than mlx name',
+        help='assign ports in CSV format. E.g., ib0,ib1,... ' +
+        'Use logical device name rather than mlx name',
         metavar='PORTS_CSV',
         default="")
     parser.add_argument(
-        '--roce',
-        action='store',
-        dest='roce',
-        help='Enable RoCE check and assign ports in CSV format. E.g., ' +
-        'eth0,eth1. Use logical device name',
-        metavar='PORTS_CSV',
-        default="")
-    parser.add_argument(
-        '--rpm-check-disabled',
+        '--no-package-check',
         action='store_true',
         dest='no_rpm_check',
-        help='Disable dependent rpm package check. Use this option ' +
-        'only if you are sure that all dependent packages have been ' +
-        'installed',
+        help='disable dependent package check',
         default=False)
 
     parser.add_argument(
@@ -278,81 +326,71 @@ def parse_arguments():
 
     args = parser.parse_args()
 
+    err_cnt = 0
     if args.fping_count < 2:
-        sys.exit("{}fping count cannot be less than 2\n".format(QUIT))
+        err_cnt += 1
+        print("{}fping count cannot be less than 2".format(ERRO))
     if args.ttime_per_inst < 10:
-        sys.exit("{}nsdperf test time cannot be less ".format(QUIT) +
-                 "than 10 sec\n")
+        err_cnt += 1
+        print("{}nsdperf test time cannot be less ".format(ERRO) +
+              "than 10 sec")
     if args.test_thread < 1 or args.test_thread > MAX_TESTERS:
-        sys.exit("{}nsdperf test threads are out of ".format(QUIT) +
-                 "range\n")
+        err_cnt += 1
+        print("{}nsdperf test threads are out of range".format(ERRO))
     if args.para_conn < 1 or args.para_conn > MAX_PARALLEL:
-        sys.exit("{}nsdperf parallel connection is out ".format(QUIT) +
-                 "of range\n")
+        err_cnt += 1
+        print("{}nsdperf parallel connection is out ".format(ERRO) +
+              "of range")
     if args.buff_size < MIN_BUFFSIZE or args.buff_size > MAX_BUFFSIZE:
-        sys.exit("{}nsdperf buffer size is out of range\n".format(QUIT))
+        err_cnt += 1
+        print("{}nsdperf buffer size is out of range".format(ERRO))
     if args.socket_size < 0 or args.socket_size > MAX_SOCKSIZE:
-        sys.exit("{}nsdperf socket size is out of range\n".format(QUIT))
-
+        err_cnt += 1
+        print("{}nsdperf socket size is out of range".format(ERRO))
     if 'mlx' in args.rdma:
-        sys.exit("{}RDMA ports must be OS names ".format(QUIT) +
-                 "(ib0,ib1,...)\n")
-    if 'mlx' in args.roce:
-        sys.exit("{}RoCE ports must be OS names ".format(QUIT) +
-                 "(ib0,ib1,...)\n")
+        err_cnt += 1
+        print("{}RDMA ports must be OS name such as ".format(ERRO) +
+              "ib0 or ib0,ib1,...")
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
     # we check is a CSV string and if so we put it on dictionary
-    cli_hosts = False
-    hosts_dictionary = {}
-    if args.hosts != "":
-        cli_hosts = True
-        try:
-            host_raw = args.hosts
-            hosts = host_raw.split(",")
-            for host_key in hosts:
-                hosts_dictionary.update({host_key: "ECE"})
-        except Exception:
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                     "hosts parameter is not on CSV format")
+    is_hosts_input = False
+    host_kv = {}
+    if args.hosts:
+        raw_hosts = args.hosts
+        hosts = raw_hosts.split(",")
+        host_num = len(hosts)
+        if host_num < MIN_HOST_NUM or host_num > MAX_HOST_NUM:
+            print("{0}Input host number must be between {1} ".format(
+                  ERRO, MIN_HOST_NUM) + "and {}".format(MAX_HOST_NUM))
+            sys.exit("{}Bye!\n".format(QUIT))
+        for host in hosts:
+            if ' ' in host:
+                print("{}Input host is not CSV format".format(ERRO))
+                sys.exit("{}Bye!\n".format(QUIT))
+            host_kv.update({host: "ECE"})
+        is_hosts_input = True
 
-    rdma_ports_list = []
-    if args.rdma != "":
+    if args.save_hosts is True and is_hosts_input is False:
+        print("{}--save-hosts must be used together ".format(ERRO) +
+              "with --hosts")
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    rdma_ports = []
+    rdma_test = False
+    if args.rdma:
+        raw_rdma_port = args.rdma
+        rdma_ports = raw_rdma_port.split(",")
+        for port in rdma_ports:
+            if ' ' in port:
+                print("{}Input RDMA port is not CSV format".format(ERRO))
+                sys.exit("{}Bye!\n".format(QUIT))
         rdma_test = True
-        rdma_ports_raw = args.rdma
-        try:
-            rdma_ports_list = rdma_ports_raw.split(",")
-        except Exception:
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                     "rdma parameter is not on CSV format")
-    else:
-        rdma_test = False
-    if args.save_hosts and not cli_hosts:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot generate hosts file if hosts not passed with --hosts")
-
-
-    roce_ports_list = []
-    if args.roce != "":
-        if platform.processor() != 's390x':
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "RoCE is only supported on s390x" )
-        roce_test = True
-        roce_ports_raw = args.roce
-        try:
-            roce_ports_list = roce_ports_raw.split(",")
-        except Exception:
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                     "roce parameter is not on CSV format")
-    else:
-        roce_test = False
-    if args.save_hosts and not cli_hosts:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot generate hosts file if hosts not passed with --hosts")
-
 
     return (args.fping_count, args.ttime_per_inst, args.test_thread,
-            args.para_conn, args.buff_size, args.socket_size, cli_hosts,
-            hosts_dictionary, rdma_test, rdma_ports_list, roce_test,
-            roce_ports_list, args.no_rpm_check, args.save_hosts)
+            args.para_conn, args.buff_size, args.socket_size, is_hosts_input,
+            host_kv, rdma_test, rdma_ports, args.no_rpm_check,
+            args.save_hosts)
 
 
 def check_parameters(
@@ -379,7 +417,7 @@ def check_parameters(
         ttime_per_inst and ttime_per_inst >= ACC_TTIME and \
         thread_num and thread_num == ACC_TESTER_THRE and \
         thread_num >= para_conn and \
-        buffer_size and buffer_size == ACC_BUFFER_SIZE and \
+        buffer_size and buffer_size == ACC_BUFFSIZE and \
         socket_size and socket_size >= buffer_size:
         acceptance_flag = True
     return acceptance_flag
@@ -387,1995 +425,2029 @@ def check_parameters(
 
 def show_header(
         module_version,
-        json_version,
-        estimated_runtime_str,
         fping_count,
         ttime_per_inst,
         thread_num,
         para_conn,
         buffer_size,
         socket_size):
-    # Say hello and give chance to disagree
-    while True:
-        print("")
-        print("Welcome to Network Readiness {}".format(module_version))
-        print("")
-        print("The purpose of the tool is to obtain network metrics of a " +
-              "number of nodes then compare them with certain KPIs")
-        print("Please access to {} to get required versions ".format(GIT_URL) +
-              "and report issues if necessary")
-        print("")
-        print("{0}Prerequisite:{1}".format(BOLDGOLDEN, NOCOLOR))
-        print("{}  Remote root passwordless ssh between all ".format(GOLDEN) +
-              "all nodes must be configured{}".format(NOCOLOR))
-        print("")
-        print("{0}NOTE:{1}".format(BOLDRED, NOCOLOR))
-        print("{}  This tool comes with absolutely no warranty ".format(RED) +
-              "of any kind. Use it at your own risk.{}".format(NOCOLOR))
-        print("{}  The latency and throughput numbers shown ".format(RED) +
-              "by this tool are under special parameters. That is not a " +
-              "generic storage standard.{}".format(NOCOLOR))
-        print("{}  The numbers do not reflect any specification ".format(RED) +
-              "of IBM Storage Scale or any user workload's performance " +
-              "number that run on it.{}".format(NOCOLOR))
-        print("")
-        print("JSON files versions:")
-        print("    supported OS:     {}".format(json_version['supported_OS']))
-        print("    packages:         {}".format(json_version['packages']))
-        print("    packages RDMA:    {}".format(json_version['packages_rdma']))
-        print("    packages RoCE:    {}".format(json_version['packages_roce']))
-        print("")
-        print("{0}To certify the environment:{1}".format(GREEN, NOCOLOR))
-        print("{0}The average latency KPI is {1} msec{2}".format(GREEN,
-              KPI_AVG_LATENCY, NOCOLOR))
-        print("{0}The maximum latency KPI is {1} mesc{2}".format(GREEN,
-              KPI_MAX_LATENCY, NOCOLOR))
-        kpi_lat_stddev = "{:.2f}".format(KPI_STDDEV_LTNC)
-        print("{0}The standard deviation latency KPI is {1} mesc{2}".format(
-              GREEN, kpi_lat_stddev, NOCOLOR))
-        print("{0}The throughput KPI is {1} MB/sec{2}".format(GREEN,
-              KPI_NSD_THROUGH, NOCOLOR))
-        print("")
-        if fping_count and fping_count >= ACC_FPING_COUNT:
-            print("{}The fping count per instance needs at least ".format(
-                  INFO) + "{} request packets. Current setting ".format(
-                  ACC_FPING_COUNT) + "is {0} packets".format(fping_count))
+    """
+    Params:
+        module_version:
+        fping_count:
+        ttime_per_inst:
+        thread_num:
+        para_conn:
+        buffer_size:
+        socket_size:
+    Returns:
+        0 if completed.
+        exit if hit error.
+    """
+    print('')
+    print("Welcome to Network Readiness {}".format(module_version))
+    print('')
+    print("The purpose of this tool is to obtain network metrics of a " +
+          "list of hosts then compare them with certain KPIs")
+    print("Please access to {} to get required version ".format(GIT_URL) +
+          "and report issue if necessary")
+    print('')
+    print("{0}IMPORTANT WARNING:{1}".format(BOLDRED, RESETCOL))
+    print("{}  Do NOT run this tool in production ".format(RED) +
+          "environment because it would generate heavy network " +
+          "traffic.".format(RESETCOL))
+    print("{0}NOTE:{1}".format(BOLDGOLDEN, RESETCOL))
+    print("{}  The latency and throughput numbers shown ".format(GOLDEN) +
+          "are under special parameters. That is not a generic storage " +
+          "standard.{}".format(RESETCOL))
+    print("{}  The numbers do not reflect any ".format(GOLDEN) +
+          "specification of IBM Storage Scale or any user workload " +
+          "running on it.{}".format(RESETCOL))
+    print('')
+    if fping_count and fping_count >= ACC_FPING_COUNT:
+        print("{}The fping count per instance needs at least ".format(
+              INFO) + "{} request packets. Current setting ".format(
+              ACC_FPING_COUNT) + "is {0} packets".format(fping_count))
+    else:
+        print("{}The fping count per instance needs at least ".format(
+              WARN) + "{} request packets. Current setting ".format(
+              ACC_FPING_COUNT) + "is {} packets".format(fping_count))
+    if ttime_per_inst and ttime_per_inst >= ACC_TTIME:
+        print("{0}The nsdperf needs at least {1} sec test time ".format(
+              INFO, ACC_TTIME) + "per instance. Current setting is " +
+              "{0} sec".format(ttime_per_inst))
+    else:
+        print("{0}The nsdperf needs at least {1} sec test ".format(WARN,
+              ACC_TTIME) + "time per instance. Current setting is " +
+              "{} sec".format(ttime_per_inst))
+    if thread_num and thread_num == ACC_TESTER_THRE:
+        if thread_num < para_conn:
+            print("{0}{1} nsdperf test thread per instance is ".format(
+                  WARN, thread_num) + "less than {} parallel ".format(
+                  para_conn) + "connection(s)")
         else:
-            print("{}The fping count per instance needs at least ".format(
-                  WARN) + "{} request packets. Current setting ".format(
-                  ACC_FPING_COUNT) + "is {} packets".format(fping_count))
-        if ttime_per_inst and ttime_per_inst >= ACC_TTIME:
-            print("{0}The nsdperf needs at least {1} sec test time ".format(
-                  INFO, ACC_TTIME) + "per instance. Current setting is " +
-                  "{0} sec".format(ttime_per_inst))
-        else:
-            print("{0}The nsdperf needs at least {1} sec test ".format(WARN,
-                  ACC_TTIME) + "time per instance. Current setting is " +
-                  "{} sec".format(ttime_per_inst))
-        if thread_num and thread_num == ACC_TESTER_THRE:
-            if thread_num < para_conn:
-                print("{0}{1} nsdperf test thread per instance is ".format(
-                      WARN, thread_num) + "less than {} parallel ".format(
-                      para_conn) + "connection(s)")
-            else:
-                print("{0}The nsdperf needs {1} test thread per ".format(INFO,
-                      ACC_TESTER_THRE) + "instance. Current setting is " +
-                      "{}".format(thread_num))
-        else:
-            print("{0}The nsdperf needs {1} test thread per ".format(WARN,
+            print("{0}The nsdperf needs {1} test thread per ".format(INFO,
                   ACC_TESTER_THRE) + "instance. Current setting is " +
                   "{}".format(thread_num))
-        if buffer_size and buffer_size == ACC_BUFFER_SIZE:
-            if socket_size < buffer_size:
-                print("{0}{1} bytes nsdperf socket size is less ".format(WARN,
-                      socket_size) + "than {} bytes buffer size".format(
-                      buffer_size))
-            else:
-                print("{0}The nsdperf needs {1} bytes buffer size. ".format(
-                      INFO, ACC_BUFFER_SIZE) + "Current setting is " +
-                      "{} bytes".format(buffer_size))
-        else:
-            print("{0}The nsdperf needs {1} bytes buffer size. ".format(WARN,
-                  ACC_BUFFER_SIZE) + "Current setting is {} bytes".format(
+    else:
+        print("{0}The nsdperf needs {1} test thread per ".format(WARN,
+              ACC_TESTER_THRE) + "instance. Current setting is " +
+              "{}".format(thread_num))
+    if buffer_size and buffer_size == ACC_BUFFSIZE:
+        if socket_size < buffer_size:
+            print("{0}{1} bytes nsdperf socket size is less ".format(WARN,
+                  socket_size) + "than {} bytes buffer size".format(
                   buffer_size))
-        print("")
-        print("{}The total time consumption according to above ".format(INFO) +
-              "paramters is {0}~{1} minutes{2}".format(PURPLE,
-              estimated_runtime_str, NOCOLOR))
-        print("")
-        run_this = raw_input("Do you want to continue? (y/n): ")
-        if run_this.lower() == 'y':
-            break
-        if run_this.lower() == 'n':
-            print
-            sys.exit("{}Have a nice day! Bye.\n".format(QUIT))
-    print("")
-
-
-def check_os_redhat(os_dictionary):
-    redhat8 = False
-    # Check redhat-release vs dictionary list
-    try:
-      redhat_distribution = platform.linux_distribution()
-    except AttributeError as E:
-        import distro
-        redhat_distribution = distro.linux_distribution()
-
-    redhat_distribution_str = redhat_distribution[0] + \
-        " " + redhat_distribution[1]
-    error_message = RED + "QUIT: " + NOCOLOR + " " + \
-        redhat_distribution_str + " is not a supported OS for this tool\n"
-    try:
-        if os_dictionary[redhat_distribution_str] == 'OK':
-            #print(GREEN + "OK: " + NOCOLOR + redhat_distribution_str +
-            #      " is a supported OS for this tool")
-            #print("")
-            if "8." in redhat_distribution[1]:
-                redhat8 = True
         else:
-            sys.exit(error_message)
-    except Exception:
-        sys.exit(error_message)
-    return redhat8
+            print("{0}The nsdperf needs {1} bytes buffer size. ".format(
+                  INFO, ACC_BUFFSIZE) + "Current setting is " +
+                  "{} bytes".format(buffer_size))
+    else:
+        print("{0}The nsdperf needs {1} bytes buffer size. ".format(WARN,
+              ACC_BUFFSIZE) + "Current setting is {} bytes".format(
+              buffer_size))
+    print('')
+    return 0
 
 
-def get_json_versions(
-                    os_dictionary,
-                    packages_dictionary,
-                    packages_roce_dict,
-                    packages_rdma_dict):
-    # Gets the versions of the json files into a dictionary
-    json_version = {}
-
-    # Lets see if we can load version, if not quit
+def run_cmd_on_host(
+        host,
+        cmd):
+    """
+    Params:
+        host: hostname or IP address.
+        cmd: command to be run.
+    Returns:
+        (stdout, stderr, rc)
+    """
+    if not host or isinstance(cmd, str) is False:
+        return '', 'Invalid hostname or IP', 1
+    if not cmd or isinstance(cmd, str) is False:
+        return '', 'Invalid command', 1
+    elif ';' in cmd or '&' in cmd:
+        return '', "Command with ';' or '&' is not supported", 1
+    ssh_cmds = [
+        'ssh',
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'LogLevel=error',
+        host]
+    input_cmds = cmd.split()
+    cmds = ssh_cmds + input_cmds
+    rc = 0
     try:
-        json_version['supported_OS'] = os_dictionary['json_version']
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot load version from supported OS JSON")
-    try:
-        json_version['packages'] = packages_dictionary['json_version']
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot load version from packages JSON")
+        child = Popen(cmds, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        stdout, stderr = child.communicate()
+        rc = child.returncode
+    except BaseException as e:
+        return '', "{}".format(e), 1
 
-    try:
-        json_version['packages_rdma'] = packages_rdma_dict['json_version']
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Cannot load version from packages RDMA JSON")
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode()
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode()
+    return str(stdout), str(stderr), int(rc)
 
-    if packages_roce_dict is not None:
+
+def check_firewalld_service(hosts):
+    """
+    Params:
+        hosts: hostname list.
+    Returns:
+        0 if all firewallds are inactive in hosts.
+        exit if hit error or firewalld was acitve in hosts.
+    """
+    if not hosts or isinstance(hosts, list) is False:
+        print("{}Invalid parameter: hosts".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    cmd = 'systemctl is-active firewalld'
+    err_cnt = 0
+    active_hosts = []
+    for host in hosts:
+        _, _, rc = run_cmd_on_host(host, cmd)
+        # inactive, rc is 3
+        if rc == 0:
+            print("{0}{1} has active firewalld service".format(ERRO, host))
+            active_hosts.append(host)
+            err_cnt += 1
+        else:
+            print("{0}{1} has inactive firewalld service".format(INFO, host))
+    if err_cnt > 0:
+        print("{0}Stop firewalld service on hosts: {1} before ".format(ERRO,
+              active_hosts) + "running this tool")
+        sys.exit("{}Bye!\n".format(QUIT))
+
+
+def check_tcp_port(
+        hosts,
+        port_num):
+    """
+    Params:
+        hosts: hostname list.
+        port_num: port number.
+    Returns:
+        0 if input port number is free.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        print("{}Invalid parameter: hosts".format(ERRO))
+        err_cnt += 1
+    if not port_num or isinstance(port_num, int) is False:
+        print("{}Invalid parameter: port_num".format(ERRO))
+        err_cnt += 1
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    print('')
+    for host in hosts:
         try:
-            json_version['packages_roce'] = packages_roce_dict['json_version']
-        except Exception:
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                     "Cannot load version from packages RoCE JSON")
-    else:
-        json_version['packages_roce'] = "N/A"
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            openit = sock.connect_ex((host, port_num))
+            print("{0}Port {1} on host {2} is free".format(INFO,
+                  port_num, host))
+        except BaseException as e:
+            print("{0}Tried to connect {1} by {2}".format(ERRO, host,
+                  port_num))
+            sys.exit("{}Bye!\n".format(QUIT))
+        if openit == 0:
+            err_cnt += 1
+            print("{0}Port {1} on host {2} is not free".format(ERRO,
+                  port_num, host))
+    if err_cnt > 0:
+        print("{0}Not all port {1} of hosts are free".format(ERRO,
+              port_num))
+        sys.exit("{}Bye!\n".format(QUIT))
+    return 0
 
 
-    # If we made it this far lets return the dictionary. This was being stored
-    # in its own file before
-    return json_version
+def check_files_are_readable(files):
+    """
+    Params:
+        files: filename list.
+    Returns:
+        0 if all files are readable.
+        exit if hit error.
+    """
+    if not files or isinstance(files, list) is False:
+        print("{}Invalid parameter: files".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    err_cnt = 0
+    for fl in files:
+        if os.path.isfile(fl) is False:
+            err_cnt += 1
+            print("{0}{1} is not a rugular file".format(ERRO, fl))
+            continue
+        if os.access(fl, os.R_OK) is False:
+            err_cnt += 1
+            print("{0}{1} does not have read permission".format(ERRO, fl))
+            continue
+    if err_cnt > 0:
+        print("{}Not all files passed permission checking".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    return 0
 
 
-def check_distribution():
-    # Decide if this is a redhat or a CentOS. We only checking the running
-    # node, that might be a problem
-    if PYTHON3:
-        what_dist = distro.distro_release_info()['id']
-    else:
-        what_dist = platform.dist()[0]
-    if what_dist == "redhat" or "centos":
-        return what_dist
-    else:  # everything esle we fail
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "this only runs on RedHat at this moment")
+def is_rpm_package_installed(
+        host,
+        pkg):
+    """
+    Params:
+        host: hostname.
+        pkg: package to be checked.
+    Returns:
+        True if RPM package is correctly installed.
+        False if not.
+        exit if hit certain error.
+    """
+    err_cnt = 0
+    if not host:
+        err_cnt += 1
+        print("{}Invalid parameter: host".format(ERRO))
+    if not pkg:
+        err_cnt += 1
+        print("{}Invalid parameter: pkg".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-
-def ssh_rpm_is_installed(host, rpm_package):
-    # returns the RC of rpm -q rpm_package or quits if it cannot run rpm
-    errors = 0
-    try:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'rpm',
-                                       '-q',
-                                       rpm_package],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot run rpm over ssh on host " + host)
-    return return_code
-
-
-def ssh_service_is_up(host, service_name):
-    try:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'systemctl',
-                                       'is-active',
-                                       '--quiet',
-                                       service_name],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot run systemctl over ssh on host " + host)
-    if return_code == 0:
-        service_is_up = True
-    else:
-        service_is_up = False
-
-    return service_is_up
-
-
-def firewalld_check(hosts_dictionary):
-    # Checks if if firewalld is up on any node
-    errors = 0
-    for host in hosts_dictionary.keys():
-        firewalld_is_up = ssh_service_is_up(host, "firewalld")
-        if firewalld_is_up:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                "on host " +
-                host +
-                " the firewalld service is running")
-            errors = errors + 1
+    if '|' not in pkg:
+        cmd = "rpm -q {}".format(pkg)
+        _, _, rc = run_cmd_on_host(host, cmd)
+        if rc != 0:
+            print("{0}{1} does not have {2} installed".format(ERRO, host, pkg))
+            return False
         else:
-            print(
-                 GREEN +
-                 "OK: " +
-                 NOCOLOR +
-                 "on host " +
-                 host +
-                 " the firewalld service is not running" )
-    if errors > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Fix the firewalld status before running this tool again.\n")
-
-
-def check_tcp_port_free(hosts_dictionary, tcpport):
-    errors = 0
-    # Checks certain port is not in use
-    for host in hosts_dictionary.keys():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        openit = sock.connect_ex((host, tcpport))
-        if openit == 0:  # I can connect so it is NOT free
-            errors = errors + 1
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "on host " +
-                  str(host) +
-                  " TCP port " +
-                  str(tcpport) +
-                  " seems to be not free")
-        else:  # cannot connect so not in used or not accesible
-            print(
-                GREEN +
-                "OK: " +
-                NOCOLOR +
-                "on host " +
-                str(host) +
-                " TCP port " +
-                str(tcpport) +
-                " seems to be free")
-
-    if errors > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "TCP port " + str(tcpport) + " is not free in all hosts")
-
-
-def check_permission_files():
-    #Check executable bits and read bits for files
-    readable_files=["hosts.json", "makefile", "nsdperf.C", "packages.json",
-                    "packages_rdma.json", "packages_rdma_rh8.json",
-                    "packages_roce_rh8.json", "supported_OS.json"]
-    executable_files=["nsdperfTool.py"]
-
-    read_error = False
-    for file in readable_files:
-        if not os.access(file,os.R_OK):
-            read_error = True
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "cannot read file " +
-                  str(file) +
-                  ". Have the POSIX ACL been changed?")
-    exec_error = False
-    for file in executable_files:
-        if not os.access(file,os.X_OK):
-            exec_error = True
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "cannot execute file " +
-                  str(file) +
-                  ". Have the POSIX ACL been changed?")
-
-    if read_error or exec_error:
-        fatal_error = True
+            print("{0}{1} has {2} installed".format(INFO, host, pkg))
+            return True
     else:
-        fatal_error = False
-    return fatal_error
+        subpkgs = pkg.split('|')
+        found = False
+        for subpkg in subpkgs:
+            cmd = "rpm -q {}".format(subpkg)
+            _, _, rc = run_cmd_on_host(host, cmd)
+            if rc == 0:
+                found = True
+                print("{0}{1} has {2} installed".format(INFO, host, subpkg))
+        if found is False:
+            pkgs = ' or '.join(subpkgs)
+            print("{0}{1} does not have {2} ".format(ERRO, host, pkgs) +
+                  "installed")
+        return found
 
 
-def host_packages_check(hosts_dictionary, packages_dictionary):
-    # Checks if packages from JSON are installed or not based on the input
-    # data ont eh JSON
-    errors = 0
-    for host in hosts_dictionary.keys():
-        for rpm_package in packages_dictionary.keys():
-            if rpm_package != "json_version":
-                current_package_rc = ssh_rpm_is_installed(host, rpm_package)
-                expected_package_rc = packages_dictionary[rpm_package]
-                if current_package_rc == expected_package_rc:
-                    print(
-                        GREEN +
-                        "OK: " +
-                        NOCOLOR +
-                        "on host " +
-                        host +
-                        " the " +
-                        rpm_package +
-                        " installation status is as expected")
-                else:
-                    print(
-                        RED +
-                        "ERROR: " +
-                        NOCOLOR +
-                        "on host " +
-                        host +
-                        " the " +
-                        rpm_package +
-                        " installation status is *NOT* as expected")
-                    errors = errors + 1
-    if errors > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Fix the packages before running this tool again.\n")
+def check_package_on_host(
+        hosts,
+        pkg_kv,
+        high_speed_type=''):
+    """
+    Params:
+        hosts: hostname list.
+        pkg_kv: package to be checked.
+        high_speed_type: [Optional] type of high speed network.
+    Returns:
+        0 if package is correctly installed.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: hosts".format(ERRO))
+    if not pkg_kv or isinstance(pkg_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: host_kv".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    hs_type = ''
+    if high_speed_type:
+        hs_type = high_speed_type.lower()
+        if hs_type != 'rdma':
+            print("{}Only 'RDMA' is supported".format(ERRO))
+            sys.exit("{}Bye!\n".format(QUIT))
+
+    for host in hosts:
+        out, err, rc = run_cmd_on_host(host, 'uname -r')
+        out = out.strip()
+        err = err.strip()
+        if rc != 0 or not out:
+            print("{0}{1} failed to run cmd: 'uname -r'".format(ERRO, host))
+            if err:
+                print("{0}{1}".format(ERRO, err))
+            if not out:
+                print("{0}{1} got nothing".format(ERRO, host))
+            err_cnt += 1
+            continue
+        try:
+            short_kernel = out[:3]
+            short_kernel_ver = float(short_kernel)
+        except BaseException as e:
+            print("{0}{1} tried to extract short kernel release ".format(ERRO,
+                  host) + "but hit exception: {}".format(e))
+            err_cnt += 1
+            continue
+        if short_kernel_ver < 3.1:
+            print("{0}{1} has kernel release {2} which is not ".format(ERRO,
+                  host, out) + "supported")
+            err_cnt += 1
+            continue
+        for key, val in pkg_kv.items():
+            if key == 'Version':
+                continue
+            if key == 'Tool' or key == 'NsdperfCommon':
+                for pkg in val:
+                    if pkg == 'fping':
+                        _, _, rc = run_cmd_on_host(host, 'fping -v')
+                        if rc != 0:
+                            err_cnt += 1
+                            print("{0}{1} does not have {2} ".format(ERRO, host,
+                                  pkg) + "installed")
+                            continue
+                        else:
+                            print("{0}{1} has {2} installed".format(INFO, host,
+                                  pkg))
+                    else:
+                        rc = is_rpm_package_installed(host, pkg)
+                        if rc is False:
+                            err_cnt += 1
+                        continue
+            if hs_type == 'rdma':
+                if key == 'NsdperfRDMA':
+                    ker_pkgs = []
+                    if short_kernel_ver == 3.1:
+                        try:
+                            ker_pkgs = val['Linux_kernel_3.1']
+                        except KeyError as e:
+                            err_cnt += 1
+                            print("{0}{1} tried to extract RDMA ".format(ERRO,
+                                  host) + "packages of certain kernel but hit " +
+                                  "KeyError: {}".format(e))
+                            continue
+                    elif short_kernel_ver >= 4.1:
+                        try:
+                            ker_pkgs = val['Linux_kernel_4.1']
+                        except KeyError as e:
+                            err_cnt += 1
+                            print("{0}{1} tried to extract RDMA ".format(ERRO,
+                                  host) + "packages of certain kernel but hit " +
+                                  "KeyError: {}".format(e))
+                            continue
+                    if not ker_pkgs:
+                        err_cnt += 1
+                        print("{0}{1} cannot get RDMA requried ".format(ERRO,
+                              host) + "packages")
+                        continue
+                    for pkg in ker_pkgs:
+                        rc = is_rpm_package_installed(host, pkg)
+                        if rc is False:
+                            err_cnt += 1
+                        continue
+        print('')
+    if err_cnt > 0:
+        print("{}Please install dependent packages according ".format(ERRO) +
+              "to {} before running this tool".format(DEPE_PKG))
+        sys.exit("{}Bye!\n".format(QUIT))
+    return 0
 
 
-def ssh_file_exists(host, fileurl):
-    # returns the RC of ssh+ls of a file or quits if any error
-    try:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'which',
-                                       fileurl],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot run ls over ssh on host " + host)
-    return return_code
+def check_rdma_ports_up(
+        host,
+        rdma_ports):
+    """
+    Params:
+        host: hostname list.
+        rdma_ports: RDMA port list.
+    Returns:
+        0 if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not host:
+        err_cnt += 1
+        print("{}Invalid parameter: host".format(ERRO))
+    if not rdma_ports or isinstance(rdma_ports, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: rdma_ports".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-# Will be used for RoCE too
-def ssh_rdma_ports_are_up(host, rdma_ports_list):
-    errors = 0
-    for port in rdma_ports_list:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'ibdev2netdev',
-                                       '|',
-                                       'grep',
-                                       port,
-                                       '|',
-                                       'grep',
-                                       '"(Up)"'],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-        if return_code == 0:
-            print(
-                GREEN +
-                "OK: " +
-                NOCOLOR +
-                "on host " +
-                host +
-                " the RDMA port " +
-                port +
-                " is on UP state")
-        else:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                "on host " +
-                host +
-                " the RDMA port " +
-                port +
-                " is *NOT* on UP state")
-            errors = errors + 1
-    if errors == 0:
-        all_ports_up = True
+    out, err, rc = run_cmd_on_host(host, 'ibdev2netdev')
+    out = out.strip()
+    err = err.strip()
+    if rc != 0 or not out:
+        print("{0}{1} failed to get RDMA port information ".format(ERRO,
+              host) + "by running ibdev2netdev")
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    port_num = len(rdma_ports)
+    state_ok_cnt = 0
+    out_lines = out.splitlines()
+    for line in out_lines:
+        for port in rdma_ports:
+            if port in line and '(Up)' in line:
+                state_ok_cnt += 1
+                print("{0}{1} has '{2}' with 'Up' state".format(INFO,
+                      host, port))
+                continue
+            if port in line and '(Up)' not in line:
+                print("{0}{1} has '{2}' without 'Up' state".format(ERRO,
+                      host, port))
+                continue
+
+    if state_ok_cnt != port_num:
+        print("{0}Not all RDMA ports on {1} have 'Up' state".format(ERRO,
+              host))
+        sys.exit("{}Bye!\n".format(QUIT))
     else:
-        all_ports_up = False
-    return all_ports_up
+        return 0
 
 
-def ssh_roce_ports_are_up(host, roce_ports_list):
-    errors = 0
-    for port in roce_ports_list:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'ibdev2netdev',
-                                       '|',
-                                       'grep',
-                                       port,
-                                       '|',
-                                       'grep',
-                                       '"(Up)"'],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-        if return_code == 0:
-            print(
-                GREEN +
-                "OK: " +
-                NOCOLOR +
-                "on host " +
-                host +
-                " the RoCE port " +
-                port +
-                " is on UP state")
-        else:
-            print(
-                RED +
-                "ERROR: " +
-                NOCOLOR +
-                "on host " +
-                host +
-                " the RoCE port " +
-                port +
-                " is *NOT* on UP state")
-            errors = errors + 1
-    if errors == 0:
-        all_ports_up = True
-    else:
-        all_ports_up = False
-    return all_ports_up
+def check_mlx_link_layer(
+        hosts,
+        mlx_port_csv):
+    """
+    Params:
+        hosts: hostname list.
+        mlx_port_csv: mlx port in CSV format.
+    Returns:
+        0 if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        print("{}Invalid parameter: hosts".format(ERRO))
+        err_cnt += 1
+    if not mlx_port_csv or isinstance(mlx_port_csv, str) is False:
+        print("{}Invalid parameter: mlx_port_csv".format(ERRO))
+        err_cnt += 1
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
+    port_num_list = mlx_port_csv.split(',')
+    if not port_num_list:
+        print("{}Failed to split port number list from ".format(ERRO) +
+              "mlx_port_csv: {}".format(mlx_port_csv))
+        sys.exit("{}Bye!\n".format(QUIT))
+    mlx_ports = []
+    for portnum in port_num_list:
+        port_num_list = portnum.split('/')
+        try:
+            port = port_num_list[0]
+        except IndexError as e:
+            print("{0}Tried to extract port from {1} but ".format(ERRO,
+                  port_num_list) + "hit exception: {}".format(e))
+            sys.exit("{}Bye!\n".format(QUIT))
+        mlx_ports.append(port)
+    if not mlx_ports:
+        print("{}Failed to extract mlx port".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
 
-def check_rdma_port_mode(hosts_ports_dict):
-    errors = 0
-    for host in hosts_ports_dict.keys():
-        ssh_command = ('ssh -o StrictHostKeyChecking=no ' +
-                       '-o LogLevel=error ' + host + ' ')
-        # we remove the port bit
-        for port in hosts_ports_dict[host].keys():
-            card_str = str(hosts_ports_dict[host][port].split('/')[0])
-            try:
-                raw_out = os.popen(
-                                ssh_command + '/usr/sbin/ibstat ' +
-                                card_str).read()
-            except BaseException:
-                sys.exit(RED + "QUIT: " + NOCOLOR +
-                         "There was an issue to query rdma ports on "
-                         + host + "\n")
-            if 'Ethernet' in raw_out:
-                print(
-                    RED +
-                    "ERROR: " +
-                    NOCOLOR +
-                    "host " +
-                    host +
-                    " has Mellanox ports " +
-                    port +
-                    " on Ethernet mode")
-                errors = errors + 1
+    port_len = len(mlx_ports)
+    for host in hosts:
+        for port in mlx_ports:
+            cmd = "ibstat {}".format(port)
+            out, err, rc = run_cmd_on_host(host, cmd)
+            out = out.strip()
+            err = err.strip()
+            if rc != 0:
+                print("{0}{1} failed to run cmd: {2}".format(ERRO,
+                      host, cmd))
+                if err:
+                    print("{0}{1}".format(ERRO, err))
+                err_cnt += 1
+                continue
+            if not out:
+                print("{0}{1} ran cmd: '{2}' but got ".format(ERRO,
+                      host, cmd) + "nothing")
+                err_cnt += 1
+                continue
+            if 'InfiniBand' in out:
+                print("{0}{1} has '{2}' with InfiniBand ".format(INFO,
+                      host, port) + "Link Layer")
+                continue
             else:
-                 print(
-                    GREEN +
-                    "OK: " +
-                    NOCOLOR +
-                    "on host " +
-                    host +
-                    " Mellanox ports  " +
-                    port +
-                    " on Ethernet mode are supported")
-    return errors
+                print("{0}{1} has '{2}' but its Link ".format(ERRO,
+                      host, port) + "Layer is not InfiniBand")
+                err_cnt += 1
+                continue
+        if port_len > 1:
+            print('')
+    if port_len == 1:
+        print('')
+    if err_cnt > 0:
+        print("{}Not all mlx ports on all hosts have ".format(ERRO) +
+              "correct Link Layer")
+        sys.exit("{}Bye!\n".format(QUIT))
+    return 0
 
 
-def check_roce_port_mode(hosts_ports_dict):
-    errors = 0
-    for host in hosts_ports_dict.keys():
-        ssh_command = ('ssh -o StrictHostKeyChecking=no ' +
-                       '-o LogLevel=error ' + host + ' ')
-        # we remove the port bit
-        for port in hosts_ports_dict[host].keys():
-            card_str = str(hosts_ports_dict[host][port].split('/')[0])
-            try:
-                raw_out = os.popen(
-                                ssh_command + '/usr/sbin/ibstat ' +
-                                card_str).read()
-            except BaseException:
-                sys.exit(RED + "QUIT: " + NOCOLOR +
-                         "There was an issue to query roce ports on "
-                         + host + "\n")
+def map_ib_to_ca_port(
+        host,
+        rdma_ports):
+    """
+    Params:
+        host: hostname on which to check RDMA port.
+        rdma_ports: RDMA port list.
+    Returns:
+        0 if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not host:
+        err_cnt += 1
+        print("{}Invalid parameter: host".format(ERRO))
+    if not rdma_ports or isinstance(rdma_ports, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: rdma_ports".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    return errors
+    out, err, rc = run_cmd_on_host(host, 'ibdev2netdev')
+    out = out.strip()
+    err = err.strip()
+    if rc != 0:
+        print("{0}{1} failed to run cmd: ibdev2netdev".format(ERRO, host))
+        sys.exit("{}Bye!\n".format(QUIT))
+    if not out:
+        print("{0}{1} ran cmd: ibdev2netdev but got nothing".format(ERRO,
+              host))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    port_kv = {}
+    out_lines = out.splitlines()
+    for line in out_lines:
+        line_to_list = line.split()
+        try:
+            dev_name = line_to_list[4]
+            mlx_name = line_to_list[0]
+            port_num = line_to_list[2]
+        except IndexError as e:
+            print("{0}{1} tried to extract IB items but hit ".format(ERRO,
+                  host) + "IndexError: {}".format(e))
+            sys.exit("{}Bye!\n".format(QUIT))
+        ca_name = "{0}/{1}".format(mlx_name, port_num)
+        port_kv[dev_name] = ca_name
+        if dev_name in rdma_ports:
+            print("{0}{1} has '{2}' with CA(Channel Adapter) ".format(INFO,
+                  host, dev_name) + "name '{}'".format(ca_name))
+
+    if not port_kv:
+        print("{0}{1} failed to generate RDMA port K-V pairs".format(ERRO,
+              host))
+        sys.exit("{}Bye!\n".format(QUIT))
+    return port_kv
 
 
-def  map_ib_to_mlx_roce(host, roce_ports_list):
-    port_pair_dict = {}
-    ssh_command = ('ssh -o StrictHostKeyChecking=no ' +
-                   '-o LogLevel=error ' + host + ' ')
+def generate_mlx_port_string(
+        host_port_kv,
+        rdma_ports):
+    """
+    Params:
+        host_port_kv: Dictionary of host RDMA port.
+        rdma_ports: RDMA port list.
+    Returns:
+        mlx_port_csv if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not host_port_kv or isinstance(host_port_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: host_port_kv".format(ERRO))
+    if not rdma_ports or isinstance(rdma_ports, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: rdma_ports".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    port_len = len(rdma_ports)
+    mlx_ports = []
+    for host, port in host_port_kv.items():
+        for key, val in port.items():
+            if key in rdma_ports:
+                mlx_ports.append(val)
+
+    dedup_mlx_ports = list(set(mlx_ports))
+    if len(dedup_mlx_ports) != port_len:
+        print("{}There is host has different CA name ".format(ERRO) +
+              "or CA port number")
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    mlx_port_csv = ','.join(dedup_mlx_ports)
+    return mlx_port_csv
+
+
+def get_rdma_mlx_ports(
+        hosts,
+        rdma_ports):
+    """
+    Params:
+        hosts: hostnames on which to check RDMA ports.
+        rdma_ports: RDMA ports such as ['ib0', 'ib1'].
+    Returns:
+        mlx port in CSV format if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    for host in hosts:
+        _, _, rc = run_cmd_on_host(host, 'which ibdev2netdev')
+        if rc != 0:
+            print("{0}{1} dose not have executable ibdev2netdev".format(
+                  ERRO, host))
+            err_cnt += 1
+        _, _, rc = run_cmd_on_host(host, 'which ibstat')
+        if rc != 0:
+            print("{0}{1} dose not have executable ".format(ERRO, host) +
+                  "ibstat")
+            err_cnt += 1
+    if err_cnt > 0:
+        print("{0}Install required RDMA tools before running ".format(
+              ERRO) + "this tool")
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    port_err_cnt = 0
+    for host in hosts:
+        for port in rdma_ports:
+            _, _, rc = run_cmd_on_host(host, "ifconfig {}".format(port))
+            if rc != 0:
+                port_err_cnt += 1
+                print("{0}{1} does not have RDMA device ".format(ERRO,
+                      host) + "port '{}'".format(port))
+                continue
+    if port_err_cnt > 0:
+        print("{}Not all hosts have all specified RDMA ".format(ERRO) +
+              "ports")
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    host_port_kv = {}
+    for host in hosts:
+        check_rdma_ports_up(host, rdma_ports)
+        dev_ca_kv = map_ib_to_ca_port(host, rdma_ports)
+        host_port_kv[host] = dev_ca_kv
+        print('')
+
+    mlx_port_csv = generate_mlx_port_string(host_port_kv, rdma_ports)
+    check_mlx_link_layer(hosts, mlx_port_csv)
+    return mlx_port_csv
+
+
+def is_valid_ipv4(address):
+    """
+    Params:
+        address: IPv4 address.
+    Returns:
+        0 if given IP is legal IPv4 address.
+        1 if not.
+    """
     try:
-        raw_os = os.popen(
-                        ssh_command +
-                        "ibdev2netdev|awk '{print$5}'").read()
-        raw_mlx = os.popen(
-                        ssh_command +
-                        "ibdev2netdev|awk '{print$1}'").read()
-        raw_port = os.popen(
-                        ssh_command +
-                        "ibdev2netdev|awk '{print$3}'").read()
-    except BaseException:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "There was an issue to query rdma/roce cards on " + host + "\n")
-    raw_list_os = raw_os.strip().split("\n")
-    raw_list_mlx = raw_mlx.strip().split("\n")
-    raw_list_port = raw_port.strip().split("\n")
-
-    port_pair_dict = {osdev: '{}/{}'.format(raw_list_mlx[osidx],raw_list_port[osidx])
-
-
-    for osidx, osdev in
-        enumerate(raw_list_os) if osdev in roce_ports_list}
-
-
-    for osdev in port_pair_dict:
-        print(
-              GREEN +
-              "OK: " +
-              NOCOLOR +
-              "on host " +
-              host +
-              " the RoCE port " +
-              osdev +
-              " is CA " +
-              port_pair_dict[osdev])
-    return port_pair_dict
-
-
-def  map_ib_to_mlx_rdma(host, rdma_ports_list):
-    port_pair_dict = {}
-    ssh_command = ('ssh -o StrictHostKeyChecking=no ' +
-                   '-o LogLevel=error ' + host + ' ')
-    try:
-        raw_os = os.popen(
-                        ssh_command +
-                        "ibdev2netdev|awk '{print$5}'").read()
-        raw_mlx = os.popen(
-                        ssh_command +
-                        "ibdev2netdev|awk '{print$1}'").read()
-        raw_port = os.popen(
-                        ssh_command +
-                        "ibdev2netdev|awk '{print$3}'").read()
-    except BaseException:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "There was an issue to query rdma/roce cards on " + host + "\n")
-    raw_list_os = raw_os.strip().split("\n")
-    raw_list_mlx = raw_mlx.strip().split("\n")
-    raw_list_port = raw_port.strip().split("\n")
-
-    port_pair_dict = {osdev: '{}/{}'.format(raw_list_mlx[osidx],raw_list_port[osidx])
-
-
-    for osidx, osdev in
-        enumerate(raw_list_os) if osdev in rdma_ports_list}
-
-
-    for osdev in port_pair_dict:
-        print(
-              GREEN +
-              "OK: " +
-              NOCOLOR +
-              "on host " +
-              host +
-              " the RDMA port " +
-              osdev +
-              " is CA " +
-              port_pair_dict[osdev])
-    return port_pair_dict
-
-
-def check_rdma_ports_OS(host, port):
-    # Lets check we have the tool we need
-    try:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'ifconfig',
-                                       port],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot check port over ssh on host " + host)
-    if return_code == 0:
-        error = False
-    else:
-        error = True
-    return error
-
-def check_roce_ports_OS(host, port):
-    # Lets check we have the tool we need
-    try:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'ifconfig',
-                                       port],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot check port over ssh on host " + host)
-    if return_code == 0:
-        error = False
-    else:
-        error = True
-    return error
-
-
-def check_rdma_tools(host, toolpath):
-    # Given the host returns a list of the IB ports on up status
-    errors = 0
-    # Lets check we have the tool we need
-    rc_tool = ssh_file_exists(host, toolpath)
-    if rc_tool == 0:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "on host " +
-            host +
-            " the file " +
-            toolpath +
-            " exists")
-    else:
-        print(
-            RED +
-            "ERROR: " +
-            NOCOLOR +
-            "on host " +
-            host +
-            " the file " +
-            toolpath +
-            " does *NOT* exists")
-        errors = errors + 1
-    return errors
-
-
-def check_roce_tools(host, toolpath):
-    # Given the host returns a list of the IB ports on up status
-    errors = 0
-    # Lets check we have the tool we need
-    rc_tool = ssh_file_exists(host, toolpath)
-    if rc_tool == 0:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "on host " +
-            host +
-            " the file " +
-            toolpath +
-            " exists")
-    else:
-        print(
-            RED +
-            "ERROR: " +
-            NOCOLOR +
-            "on host " +
-            host +
-            " the file " +
-            toolpath +
-            " does *NOT* exists")
-        errors = errors + 1
-    return errors
-
-
-def unique_items_list(my_list):
-    unique_items_list = []
-    for item in my_list:
-        if item not in unique_items_list:
-            unique_items_list.append(item)
-    return unique_items_list
-
-
-def create_rdma_mlx_csv(hosts_ports_dict, rdma_ports_list):
-    mlx_list = []
-    for host in hosts_ports_dict.keys():
-        for os_port in hosts_ports_dict[host].keys():
-            if os_port in rdma_ports_list:
-                mlx_list.append(hosts_ports_dict[host][os_port])
-
-    # so we have a list with mlx ports
-    mlx_list_unique = unique_items_list(mlx_list)
-    mlx_list_unique_csv = ','.join(mlx_list_unique)
-    return mlx_list_unique_csv
-
-
-def create_roce_mlx_csv(hosts_ports_dict, roce_ports_list):
-    mlx_list = []
-    for host in hosts_ports_dict.keys():
-        for os_port in hosts_ports_dict[host].keys():
-            if os_port in roce_ports_list:
-                mlx_list.append(hosts_ports_dict[host][os_port])
-
-    # so we have a list with mlx ports
-    mlx_list_unique = unique_items_list(mlx_list)
-    mlx_list_unique_csv = ','.join(mlx_list_unique)
-    return mlx_list_unique_csv
-
-
-def check_rdma_ports(hosts_dictionary, rdma_ports_list):
-    errors_tool = 0
-    fatal_error = False
-    for host in hosts_dictionary.keys():
-        ibdev2netdev_filepath = "ibdev2netdev"
-        error_tool_ibdev = check_rdma_tools(host, ibdev2netdev_filepath)
-        ibstat_filepath = "ibstat"
-        error_tool_ibstat = check_rdma_tools(host, ibstat_filepath)
-    errors_tool = error_tool_ibdev + error_tool_ibstat
-    if errors_tool > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Fix the missing files before running this tool again.\n")
-    # Lets see if does exist on the node or hard fail
-    not_OS_port = False
-    for host in hosts_dictionary.keys():
-        for port in rdma_ports_list:
-            not_OS_port = check_rdma_ports_OS(host, port)
-            if not_OS_port:
-                sys.exit(RED + "QUIT: " + NOCOLOR + "On host " +
-                         str(host) + " port " + port + " not found\n")
-    # Lets check the ports are UP on all nodes, or fail
-    errors_ports = 0
-    errors_port_mode = 0
-    for host in hosts_dictionary.keys():
-        ports_are_up = ssh_rdma_ports_are_up(host, rdma_ports_list)
-        if not ports_are_up:
-            errors_ports = errors_ports + 1
-    if errors_ports > 0:
-        fatal_error = True
-    hosts_ports_dict = {}
-    for host in hosts_dictionary.keys():
-        hosts_ports_dict[host] = map_ib_to_mlx_rdma(host, rdma_ports_list)
-    # Create list of mlx ports
-    rdma_ports_csv_mlx = create_rdma_mlx_csv(hosts_ports_dict, rdma_ports_list)
-    # Check Ethernet mode and status UP
-    errors_port_mode = check_rdma_port_mode(hosts_ports_dict)
-    if errors_port_mode > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Fix the port mode or disconnect the link " +
-                 "before running this tool again.\n")
-    return fatal_error, rdma_ports_csv_mlx
-
-
-def check_roce_ports(hosts_dictionary, roce_ports_list):
-    errors_tool = 0
-    fatal_error = False
-    for host in hosts_dictionary.keys():
-        ibdev2netdev_filepath = "ibdev2netdev"
-        error_tool_ibdev = check_roce_tools(host, ibdev2netdev_filepath)
-        ibstat_filepath = "ibstat"
-        error_tool_ibstat = check_roce_tools(host, ibstat_filepath)
-    errors_tool = error_tool_ibdev + error_tool_ibstat
-    if errors_tool > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Fix the missing files before running this tool again.\n")
-    # Lets see if does exist on the node or hard fail
-    not_OS_port = False
-    for host in hosts_dictionary.keys():
-        for port in roce_ports_list:
-            not_OS_port = check_roce_ports_OS(host, port)
-            if not_OS_port:
-                sys.exit(RED + "QUIT: " + NOCOLOR + "On host " +
-                         str(host) + " port " + port + " not found\n")
-    # Lets check the ports are UP on all nodes, or fail
-    errors_ports = 0
-    errors_port_mode = 0
-    for host in hosts_dictionary.keys():
-        ports_are_up = ssh_roce_ports_are_up(host, roce_ports_list)
-        if not ports_are_up:
-            errors_ports = errors_ports + 1
-    if errors_ports > 0:
-        fatal_error = True
-    hosts_ports_dict = {}
-    for host in hosts_dictionary.keys():
-        hosts_ports_dict[host] = map_ib_to_mlx_roce(host, roce_ports_list)
-    # Create list of mlx ports
-    roce_ports_csv_mlx = create_roce_mlx_csv(hosts_ports_dict, roce_ports_list)
-    # Check Ethernet mode and status UP
-    errors_port_mode = check_roce_port_mode(hosts_ports_dict)
-    if errors_port_mode > 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Fix the port mode or disconnect the link " +
-                 "before running this tool again.\n")
-    return fatal_error, roce_ports_csv_mlx
-
-
-def is_IP_address(ip):
-    # Lets check is a full ip by counting dots
-    if ip.count('.') != 3:
-        return False
-    try:
-        socket.inet_aton(ip)
-        return True
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot check IP address " + ip + "\n")
-
-
-def check_hosts_are_ips(hosts_dictionary):
-    for host in hosts_dictionary.keys():
-        is_IP = is_IP_address(host)
-        if not is_IP:
-            sys.exit(
-                RED +
-                "QUIT: " +
-                NOCOLOR +
-                "on hosts JSON file or CLI parameter '" +
-                host +
-                "' is not a valid IPv4. Fix before running this tool again.\n")
-
-
-def check_hosts_number(hosts_dictionary):
-    number_unique_hosts = len(hosts_dictionary)
-    number_unique_hosts_str = str(number_unique_hosts)
-    if len(hosts_dictionary) > 64 or len(hosts_dictionary) < 2:
-        sys.exit(
-            RED +
-            "QUIT: " +
-            NOCOLOR +
-            "the number of hosts is not valid. It is " +
-            number_unique_hosts_str +
-            " and should be between 2 and 64 unique hosts.\n")
-
-
-def create_local_log_dir(log_dir_timestamp):
-    logdir = os.path.join(
-        os.getcwd(),
-        'log',
-        log_dir_timestamp)
-    try:
-        os.makedirs(logdir)
-        return logdir
-    except Exception:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot create local directory " + logdir + "\n")
-
-
-def create_log_dir(hosts_dictionary, log_dir_timestamp):
-    # datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    print ("Creating log dir on hosts:")
-    errors = 0
-    logdir = os.path.join(
-        os.getcwd(),
-        'log',
-        log_dir_timestamp)
-    for host in hosts_dictionary:
-        return_code = subprocess.call(['ssh',
-                                       '-o',
-                                       'StrictHostKeyChecking=no',
-                                       '-o',
-                                       'LogLevel=error',
-                                       host,
-                                       'mkdir',
-                                       '-p',
-                                       logdir],
-                                      stdout=DEVNULL,
-                                      stderr=DEVNULL)
-        if return_code == 0:
-            print(
-                GREEN +
-                "OK: " +
-                NOCOLOR +
-                "on host " +
-                host +
-                " logdir " +
-                logdir +
-                " has been created")
+        socket.inet_pton(socket.AF_INET, address)
+    except AttributeError:
+        try:
+            socket.inet_aton(address)
+        except socket.error as e:
+            print("{0}{1} is not a valid IPv4. ".format(ERRO, address) +
+                  "Hit exception: {}".format(e))
+            return 1
+        if address.count('.') == 3:
+            return 0
         else:
-            print(
-                  RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " logdir " +
-                  logdir +
-                  " has *NOT* been created")
-            errors = errors + 1
-    if errors > 0:
-        sys.exit(RED +
-                 "QUIT: " +
-                 NOCOLOR +
-                 "we cannot continue without all the log directories created")
+            print("{0}{1} is not a valid IPv4".format(ERRO, address))
+            return 1
+    return 0
+
+
+def are_hosts_ipv4(hosts):
+    """
+    Params:
+        hosts: hostname list.
+    Returns:
+        0 if all hosts are IPv4 addresses.
+        !0 if not.
+    """
+    if not hosts or isinstance(hosts, list) is False:
+        print("{}Invalid parameter: hosts".format(ERRO))
+        return 1
+    err_cnt = 0
+    for host in hosts:
+        rc = is_valid_ipv4(host)
+        if rc != 0:
+            err_cnt += 1
+    return err_cnt
+
+
+def create_local_log_dir(foldername):
+    """
+    Params:
+        foldername:
+    Returns:
+        full path of log dir.
+        exit if hit error.
+    """
+    if not foldername or isinstance(foldername, str) is False:
+        print("{}Invalid parameter: foldername".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    try:
+        logdir = os.path.join(os.getcwd(), 'log', foldername)
+        os.makedirs(logdir)
+    except BaseException as e:
+        print("{0}Tried to create log dir but hit exception: ".format(ERRO) +
+              "{}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+    return logdir
+
+
+def remotely_create_log_dir(
+        hosts,
+        foldername):
+    """
+    Params:
+        hosts: hostname list.
+        foldername:
+    Returns:
+        full path of log dir.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: hosts".format(ERRO))
+    if not foldername or isinstance(foldername, str) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: foldername".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+    try:
+        logdir = os.path.join(os.getcwd(), 'log', foldername)
+    except BaseException as e:
+        print("{0}Tried to join log dir but hit exception: ".format(ERRO) +
+              "{}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+    cmd = "mkdir -p {}".format(logdir)
+    for host in hosts:
+        _, _, rc = run_cmd_on_host(host, cmd)
+        if rc != 0:
+            err_cnt += 1
+            print("{0}{1} failed to created {2}".format(ERRO, host, logdir))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
     else:
         return logdir
 
 
-def latency_test(hosts_dictionary, logdir, fping_count):
-    fping_count_str = str(fping_count)
-    hosts_fping = ""
-    for host in sorted(hosts_dictionary.keys()):  # we ping ourselvels as well
-        hosts_fping = hosts_fping + host + " "
+def run_fping_test(
+        hosts,
+        logdir,
+        fping_count):
+    """
+    Params:
+        hosts: hostname list.
+        logdir:
+        fping_count:
+    Returns:
+        fping_out_kv = {
+            'ip': 'output_filepath',
+            ...
+        }
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: hosts".format(ERRO))
+    if not logdir or isinstance(logdir, str) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: logdir".format(ERRO))
+    if isinstance(fping_count, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fping_count".format(ERRO))
+    if fping_count < 2:
+        err_cnt += 1
+        print("{0}fping_count {1} is too little".format(ERRO, fping_count))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    for srchost in sorted(hosts_dictionary.keys()):
-        print("")
-        print("Starting ping run from " + srchost + " to all nodes")
-        fileurl = os.path.join(logdir, "lat_" + srchost + "_" + "all")
-        command = "ssh -o StrictHostKeyChecking=no -o LogLevel=error " + \
-                  str(srchost) + " fping -C " + fping_count_str + \
-                  " -q -A " + str(hosts_fping)
-        with open(fileurl, 'wb', 0) as logfping:
-            runfping = subprocess.Popen(
-                           shlex.split(command),
-                           stderr=subprocess.STDOUT,
-                           stdout=logfping)
-            runfping.wait()
-            logfping.close()
-        print("Ping run from " + srchost + " to all nodes completed")
-
-
-def throughput_test_os(command, nsd_logfile, client):
     try:
-        runperf = subprocess.Popen(shlex.split(command), stdout=nsd_logfile)
-        runperf.wait()
-        # Extra wait here it might be not needed now that we added it on
-        # nsdperTool.py startup, but we keep it.
-        time.sleep(5)
-    except BaseException:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "Throughput run " + client + " failed unexpectedly " +
-                 " when calling: " + str(command) + "\n")
+        fping_hosts = sorted(list(set(hosts)))
+    except BaseException as e:
+        print("{}Tried to generate fping host string but ".format(ERRO) +
+              "hit exception: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    fping_out_kv = {}
+    print("{}Starts 1 to n fping instances".format(INFO))
+    for srchost in fping_hosts:
+        print("{0}{1} starts fping instance to all hosts".format(INFO,
+              srchost))
+        print("{0}It will take at least {1} sec".format(INFO, fping_count))
+        filepath = os.path.join(
+                       logdir,
+                       "from_{}_to_all.fping".format(srchost))
+        cmd = 'ssh -o StrictHostKeyChecking=no -o LogLevel=error ' + \
+              "{0} fping -C {1} ".format(srchost, fping_count) + \
+              " -q -A {}".format(' '.join(fping_hosts))
+        with open(filepath, 'wb') as fh:
+            try:
+                child = Popen(
+                            shlex.split(cmd),
+                            stderr=STDOUT,
+                            stdout=fh)
+                child.wait()
+            except BaseException as e:
+                print("{0}{1} tried to run fping ".format(ERRO, srchost) +
+                      "but hit exception: {}".format(e))
+                sys.exit("{}Bye!\n".format(QUIT))
+        fping_out_kv[srchost] = filepath
+        print("{0}{1} completed fping test".format(INFO, srchost))
+    print('')
+    if not fping_out_kv:
+        print("{}Falied to generate fping output K-V".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    return fping_out_kv
 
 
-def throughput_test(hosts_dictionary,
-                    logdir,
-                    ttime_per_inst,
-                    test_thread,
-                    para_conn,
-                    buff_size,
-                    socket_size,
-                    rdma_test,
-                    rdma_ports_csv_mlx,
-                    roce_test,
-                    roce_ports_csv_mlx):
+def run_nsdperf_test(
+        hosts,
+        logdir,
+        ttime_per_inst,
+        test_thread,
+        para_conn,
+        buff_size,
+        socket_size,
+        rdma_test=False,
+        mlx_port_csv=''):
+    """
+    Params:
+        hosts: hostname list.
+        logdir:
+        ttime_per_inst:
+        test_thread:
+        para_conn:
+        buff_size:
+        socket_size:
+        rdma_test:
+        mlx_port_csv:
+    Returns:
+        nsdperf_out_kv = {
+            'o2m': {
+                'ip': 'output_filepath',
+                ...
+            },
+            'm2m': 'output_filepath'
+        }
+        exit if hit error.
+    """
     throughput_json_files_list = []
-    print("")
-    print("Starting throughput tests. Please be patient.")
-    for client in hosts_dictionary.keys():
-        print("")
-        print("Start throughput run from " + client + " to all nodes")
-        server_hosts_dictionary = dict(hosts_dictionary)
-        del server_hosts_dictionary[client]
-        server_csv_str = (",".join(server_hosts_dictionary.keys()))
-        # Craft the call of nsdperf exec/wrapper
-        pre_cmd = "{0} -t read -k {1} -b {2} ".format(NSDPERF, socket_size, \
+    err_cnt = 0
+    if not hosts or isinstance(hosts, list) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: hosts".format(ERRO))
+    if not logdir or isinstance(logdir, str) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: logdir".format(ERRO))
+    if isinstance(ttime_per_inst, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: ttime_per_inst".format(ERRO))
+    if ttime_per_inst < 10:
+        err_cnt += 1
+        print("{}ttime_per_inst is too little".format(ERRO))
+    if isinstance(test_thread, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: test_thread".format(ERRO))
+    if test_thread < 1 or test_thread > MAX_TESTERS:
+        err_cnt += 1
+        print("{}test_thread is out of range".format(ERRO))
+    if isinstance(para_conn, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: para_conn".format(ERRO))
+    if para_conn < 1 or para_conn > MAX_PARALLEL:
+        err_cnt += 1
+        print("{}para_conn is out of range".format(ERRO))
+    if isinstance(buff_size, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: buff_size".format(ERRO))
+    if buff_size < MIN_BUFFSIZE or buff_size > MAX_BUFFSIZE:
+        err_cnt += 1
+        print("{}buff_size is out of range".format(ERRO))
+    if isinstance(socket_size, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: socket_size".format(ERRO))
+    if socket_size < 0 or socket_size > MAX_SOCKSIZE:
+        err_cnt += 1
+        print("{}socket_size is out of range".format(ERRO))
+    if isinstance(rdma_test, bool) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: rdma_test".format(ERRO))
+    if rdma_test is True:
+        if not mlx_port_csv or \
+            isinstance(mlx_port_csv, str) is False:
+            err_cnt += 1
+            print("{}Invalid parameter: mlx_port_csv".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    nsdperftool_log = os.path.join(logdir, 'nsdperfTool.out')
+    ori_nsdperf_out_file = os.path.join(logdir, 'nsdperfResult.json')
+    o2m_kv = {}
+    print("{}Starts one to many nsdperf instances".format(INFO))
+    for client in hosts:
+        print("{0}{1} starts nsdperf instance to all nodes".format(INFO,
+              client))
+        print("{0}It will take at least {1} sec".format(INFO, ttime_per_inst))
+        servers = [i for i in hosts if i != client]
+        if not servers:
+            print("{0}Failed to generate servers for client {1}".format(ERRO,
+                  client))
+            sys.exit("{}Bye!\n".format(QUIT))
+        server_csv = ','.join(servers)
+        pre_cmd = "{0} -t read -k {1} -b {2} ".format(NSDTOOL, socket_size, \
                   buff_size) + "-W {0} -T {0} -P {1} -d {2} ".format( \
                   test_thread, para_conn, logdir) + " -s {} ".format( \
-                  server_csv_str) + "-c {0} -l {1}".format(client,
-                  ttime_per_inst)
-        command = ""
-        if rdma_test:
-            command = "{0} -p {1}".format(pre_cmd, rdma_ports_csv_mlx)
-        elif roce_test:
-            command = "{0} -p {1}".format(pre_cmd, roce_ports_csv_mlx)
+                  server_csv) + "-c {0} -l {1}".format(client, ttime_per_inst)
+        cmd = ''
+        if rdma_test is True:
+            cmd = "{0} -p {1}".format(pre_cmd, mlx_port_csv)
         else:
             # History: nReceivers = 256, nWorkers = 256, nTesterThreads = 256
-            command = pre_cmd
+            cmd = pre_cmd
 
-        nsd_logfile = open(logdir + "/nsdperfTool_log", "a")
-        if PYTHON3:           
-            command = "python3 {}".format(command)
+        if PYTHON2 is False:
+            cmd = "python3 {}".format(cmd)
         else:                 
-            command = "python2 {}".format(command)
-        throughput_test_os(command, nsd_logfile, client)
-        nsd_logfile.close()
+            cmd = "python2 {}".format(cmd)
+
+        with open(nsdperftool_log, 'a') as fh:
+            try:
+                child = Popen(
+                            shlex.split(cmd),
+                            stderr=STDOUT,
+                            stdout=fh)
+                child.wait()
+            except BaseException as e:
+                print("{0}Tried to run {1} but hit ".format(ERRO, NSDTOOL) +
+                      "exception: {}".format(e))
+                sys.exit("{}Bye!\n".format(QUIT))
         # Copy the file to avoid overwrite it
+        nsdperf_out = os.path.join(
+                          logdir,
+                          "from_{}_to_all.nsdperf.json".format(client))
         try:
-            copyfile(logdir + "/nsdperfResult.json", logdir + "/nsd_" +
-                     client + ".json")
-        except BaseException:
-            print(YELLOW + "WARNING: " + NOCOLOR +
-                  "cannot copy result JSON file")
-        print("Completed throughput run from " + client + " to all nodes")
-    print("")
-    print("Starting many to many nodes throughput test")
-    # We run a mess run to catch few more issues
-    middle_index = int(len(hosts_dictionary)/2)
-    if PYTHON3:
-        clients_nodes_d = dict(list(hosts_dictionary.items())[middle_index:])
-        servers_nodes_d = dict(list(hosts_dictionary.items())[:middle_index])
-    else:
-        clients_nodes_d = dict(hosts_dictionary.items()[middle_index:])
-        servers_nodes_d = dict(hosts_dictionary.items()[:middle_index])
-    clients_csv = (",".join(clients_nodes_d.keys()))
-    servers_csv = (",".join(servers_nodes_d.keys()))
-    pre_cmd = "{0} -t read -k {1} -b {2} ".format(NSDPERF, socket_size, \
+            copyfile(ori_nsdperf_out_file, nsdperf_out)
+        except BaseException as e:
+            print("{0}Tried to copy {1} to {2} but hit ".format(ERRO,
+                  ori_nsdperf_out_file, nsdperf_out) + "exception: " +
+                  "{}".format(e))
+            sys.exit("{}Bye!\n".format(QUIT))
+        o2m_kv[client] = nsdperf_out
+        print("{0}nsdperf instance from {1} to other hosts ".format(INFO,
+              client) + "completed")
+    print('')
+
+    try:
+        mid = int(len(hosts) / 2)
+        clients = hosts[mid:]
+        servers = hosts[:mid]
+    except BaseException as e:
+        print("{}Tried to generate clients and servers ".format(ERRO) +
+              "from hosts but hit exception: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    client_csv = ','.join(clients)
+    server_csv = ','.join(servers)
+    pre_cmd = "{0} -t read -k {1} -b {2} ".format(NSDTOOL, socket_size, \
               buff_size) + "-W {0} -T {0} -P {1} -d {2} ".format( \
               test_thread, para_conn, logdir) + " -s {} ".format( \
-              servers_csv) + "-c {0} -l {1}".format(clients_csv,
+              server_csv) + "-c {0} -l {1}".format(client_csv,
               ttime_per_inst)
-    if rdma_test:
-        command = "{0} -p {1}".format(pre_cmd, rdma_ports_csv_mlx)
-    elif roce_test:
-        command = "{0} -p {1}".format(pre_cmd, roce_ports_csv_mlx)
+    cmd = ''
+    if rdma_test is True:
+        cmd = "{0} -p {1}".format(pre_cmd, mlx_port_csv)
     else:
         # History: nReceivers = 256, nWorkers = 256, nTesterThreads = 256
-        command = pre_cmd
+        cmd = pre_cmd
 
-    nsd_logfile = open(logdir + "/nsdperfTool_log", "a")
-    if PYTHON3:
-        command = "python3 {}".format(command)
+    if PYTHON2 is False:
+        cmd = "python3 {}".format(cmd)
     else:
-        command = "python2 {}".format(command)
-    throughput_test_os(command, nsd_logfile, client)
-    nsd_logfile.close()
+        cmd = "python2 {}".format(cmd)
+
+    print("{}Starts many to many nsdperf instance".format(INFO))
+    print("{0}It will take at least {1} sec".format(INFO, ttime_per_inst))
+    with open(nsdperftool_log, 'a') as fh:
+        try:
+            child = Popen(
+                        shlex.split(cmd),
+                        stderr=STDOUT,
+                        stdout=fh)
+            child.wait()
+        except BaseException as e:
+            print("{0}Tried to run {1} but hit ".format(ERRO, NSDTOOL) +
+                  "exception: {}".format(e))
+            sys.exit("{}Bye!\n".format(QUIT))
     # Copy the file to avoid overwrite it
+    nsdperf_out = os.path.join(logdir, 'many_to_many.nsdperf.json')
     try:
-        copyfile(logdir + "/nsdperfResult.json", logdir +
-                 "/nsd_mess" + ".json")
-    except BaseException:
-        print(YELLOW + "WARNING: " + NOCOLOR +
-              "cannot copy result JSON file")
-    print("Completed many to many nodes throughput test")
-    return clients_nodes_d
+        copyfile(ori_nsdperf_out_file, nsdperf_out)
+    except BaseException as e:
+        print("{0}Tried to copy {1} to {2} but hit ".format(ERRO,
+              ori_nsdperf_out_file, nsdperf_out) + "exception: " +
+              "{}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+    print("{0}Many to many nsdperf instance completed".format(INFO,
+          client))
+    nsdperf_out_kv = {}
+    nsdperf_out_kv['o2m'] = o2m_kv
+    nsdperf_out_kv['m2m'] = nsdperf_out
+    return nsdperf_out_kv
 
 
-def mean_list(list):
-    if len(list) == 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot calculate mean of list: " + repr(list) + "\n")
-    # We replace a timeout "-" for 1 sec latency
-    list = [lat.replace('-', '1000.00') for lat in list]
-    list = [float(lat) for lat in list]  # we convert them to float
-    mean = sum(list) / len(list)
-    return mean
+def calc_mean_from_list(alist):
+    """
+    Params:
+        alist: a number list.
+    Returns:
+        the mean value of the list.
+        exit if hit error.
+    """
+    if not alist or isinstance(alist, list) is False:
+        print("{}Invalid parameter: alist".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    alen = len(alist)
+    blist = []
+    for i in alist:
+        float_i = 0.00
+        # replace timeout string "-" to 1000.00 msec
+        if i == '-':
+            float_i = 1000.00
+        else:
+            float_i = float(i)
+        blist.append(float_i)
+    blen = len(blist)
+    if alen != blen:
+        print("{0}Failed to format original list {1}".format(ERRO, alist))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    mean_val = float(sum(blist) / blen)
+    mean_val = float("{:.2f}".format(mean_val))
+    return mean_val
 
 
-def max_list(list):
-    if len(list) == 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot calculate max of list: " + repr(list) + "\n")
-    # We replace a timeout "-" for 1 sec latency
-    list = [lat.replace('-', '1000.00') for lat in list]
-    list = [float(lat) for lat in list]
-    max_lat = max(list)
-    return max_lat
+def calc_max_from_list(alist):
+    """
+    Params:
+        alist: a number list.
+    Returns:
+        the maximum value of the list.
+        exit if hit error.
+    """
+    if not alist or isinstance(alist, list) is False:
+        print("{}Invalid parameter: alist".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    alen = len(alist)
+    blist = []
+    for i in alist:
+        float_i = 0.00
+        # replace timeout string "-" to 1000.00 msec
+        if i == '-':
+            float_i = 1000.00
+        else:
+            float_i = float(i)
+        blist.append(float_i)
+    blen = len(blist)
+    if alen != blen:
+        print("{0}Failed to format original list {1}".format(ERRO, alist))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    max_val = max(blist)
+    max_val = float("{:.2f}".format(max_val))
+    return max_val
 
 
-def min_list(list):
-    if len(list) == 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "cannot calculate min of list: " + repr(list) + "\n")
-    # We replace a timeout "-" for 1 sec latency
-    list = [lat.replace('-', '1000.00') for lat in list]
-    list = [float(lat) for lat in list]
-    min_lat = min(list)
-    return min_lat
+def calc_min_from_list(alist):
+    """
+    Params:
+        alist: a number list.
+    Returns:
+        the minimum value of the list.
+        exit if hit error.
+    """
+    if not alist or isinstance(alist, list) is False:
+        print("{}Invalid parameter: alist".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    alen = len(alist)
+    blist = []
+    for i in alist:
+        float_i = 0.00
+        # replace timeout string "-" to 1000.00 msec
+        if i == '-':
+            float_i = 1000.00
+        else:
+            float_i = float(i)
+        blist.append(float_i)
+    blen = len(blist)
+    if alen != blen:
+        print("{0}Failed to format original list {1}".format(ERRO, alist))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    min_val = min(blist)
+    min_val = float("{:.2f}".format(min_val))
+    return min_val
 
 
-def stddev_list(list, mean):
-    if len(list) == 0:
-        sys.exit(
-            RED +
-            "QUIT: " +
-            NOCOLOR +
-            "cannot calculate standard deviation of list: " +
-            repr(list) +
-            "\n")
-    # We replace a timeout "-" for 1 sec latency
-    list = [lat.replace('-', '1000.00') for lat in list]
-    list = [float(lat) for lat in list]
-    if PYTHON3:
+def calc_stddev_from_list(
+        alist,
+        mean):
+    """
+    Params:
+        alist: a number list.
+        mean: the mean value of given list.
+    Returns:
+        the standard deviation of the list.
+        exit if hit error.
+    """
+    if not alist or isinstance(alist, list) is False:
+        print("{}Invalid parameter: alist".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    if isinstance(mean, (int, float)) is False:
+        print("{}Invalid parameter: mean".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    alen = len(alist)
+    blist = []
+    for i in alist:
+        float_i = 0.00
+        # replace timeout string "-" to 1000.00 msec
+        if i == '-':
+            float_i = 1000.00
+        else:
+            float_i = float(i)
+        blist.append(float_i)
+    blen = len(blist)
+    if alen != blen:
+        print("{0}Failed to format original list {1}".format(ERRO, alist))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    stddev_val = 0.0
+    if PYTHON2 is False:
         try:
-            stddev_lat = statistics.stdev(list)
+            stddev_val = statistics.stdev(blist)
         except statistics.StatisticsError:
-            # Assuming here the error is due 2 node run, not ideal
-            stddev_lat = 0
+            # Assuming the error is due 2 hosts, not ideal
+            stddev_val = 0.0
     else:
         try:
-            stddev_lat = sqrt(float(
-                reduce(lambda x, y: x + y, map(
-                    lambda x: (x - mean) ** 2, list))) / len(list))
+            stddev_val = sqrt(
+                             float(
+                                 reduce(
+                                     lambda x, y: x + y, map(
+                                         lambda x: (x - mean) ** 2,
+                                         blist)
+                                       )
+                                  ) / blen)
         except TypeError:
-            # Assuming here the error is due 2 node run, not ideal
-            stddev_lat = 0
-    stddev_lat = Decimal(stddev_lat)
-    stddev_lat = round(stddev_lat, 2)
-    return stddev_lat
+            # Assuming the error is due 2 hosts, not ideal
+            stddev_val = 0.0
+
+    stddev_val = float("{:.2f}".format(stddev_val))
+    return stddev_val
 
 
-def pct_diff_list(bw_str_list):
-    # as the rest expects a str
+def calc_diff_from_list(alist):
+    """
+    Params:
+        alist: a number list.
+    Returns:
+        the minimum value of the list.
+        exit if hit error.
+    """
+    if not alist or isinstance(alist, list) is False:
+        print("{}Invalid parameter: alist".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
     try:
-        pc_diff_bw = abs(float(min_list(bw_str_list)) * 100 /
-                         float(max_list(bw_str_list)))
-    except BaseException:
-        sys.exit(
-            RED +
-            "QUIT: " +
-            NOCOLOR +
-            "cannot calculate mean of bandwidth run")
-    return pc_diff_bw
+        # (max - min) / max = 1 - min / max
+        diff_pct = 100.0 - calc_min_from_list(alist) * 100.0 / calc_max_from_list(alist)
+    except BaseException as e:
+        print("{}Tried to calculate difference ".format(ERRO) +
+              "percentage but hit exception: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+    diff_pct = float("{:.2f}".format(diff_pct))
+    return diff_pct
 
 
-def file_exists(fileurl):
-    # Lets check the files do actually exists
-    if os.path.isfile(fileurl):
-        pass
+def check_file_exists(filepath):
+    """
+    Params:
+        filepath:
+    Returns:
+        0 if filepath exists.
+        exit if hit error.
+    """
+    if not filepath or isinstance(filepath, str) is False:
+        print("{}Invalid parameter: filepath".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+    if os.path.isfile(filepath) is True:
+        return 0
     else:
-        sys.exit(RED + "QUIT: " + NOCOLOR + " cannot find file: " +
-                 fileurl)
+        print("{0}{1} does NOT exist".format(ERRO, filepath))
+        sys.exit("{}Bye!\n".format(QUIT))
 
 
-def load_json_files_into_dictionary(json_files_list):
-    all_json_dict = {}
+def load_fping_test_result(out_file_kv):
+    """
+    Params:
+        out_file_kv: file path K-V of fping output.
+    Returns:
+        multpile Python dictionaries if succeeded.
+        exit if hit error.
+    """
+    if not out_file_kv or isinstance(out_file_kv, dict) is False:
+        print("{}Invalid parameter: out_file_kv".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    all_fping_avg_lat_kv = {}
+    all_fping_max_lat_kv = {}
+    all_fping_min_lat_kv = {}
+    all_fping_stddev_kv = {}
+    for key, val in out_file_kv.items():
+        check_file_exists(val)
+        avg_lat = 0.0
+        max_lat = 0.0
+        min_lat = 0.0
+        stddev_lat = 0.0
+        try:
+            with open(val, 'r') as fh:
+                avgs = []
+                maxs = []
+                mins = []
+                for line in fh.readlines():
+                    line_to_list = line.split(':')
+                    host_ip = line_to_list[0].strip()
+                    # ignore local ip
+                    if key == host_ip:
+                        continue
+                    lat_str = line_to_list[1].strip()
+                    lats = lat_str.split()
+                    hst_avg_lat = calc_mean_from_list(lats)
+                    hst_max_lat = calc_max_from_list(lats)
+                    hst_min_lat = calc_min_from_list(lats)
+                    avgs.append(hst_avg_lat)
+                    maxs.append(hst_max_lat)
+                    mins.append(hst_min_lat)
+                avg_lat = calc_mean_from_list(avgs)
+                max_lat = calc_max_from_list(maxs)
+                min_lat = calc_min_from_list(mins)
+                stddev_lat = calc_stddev_from_list(avgs, avg_lat)
+        except BaseException as e:
+            print("{}Tried to extract fping result from ".format(ERRO) +
+                  "'{0}' but hit exception: {1}".format(val, e))
+            sys.exit("{}Bye!\n".format(QUIT))
+        all_fping_avg_lat_kv[key] = avg_lat
+        all_fping_max_lat_kv[key] = max_lat
+        all_fping_min_lat_kv[key] = min_lat
+        all_fping_stddev_kv[key] = stddev_lat
+    return (all_fping_avg_lat_kv, all_fping_max_lat_kv,
+            all_fping_min_lat_kv, all_fping_stddev_kv)
+
+
+def load_nsdperf_test_result(out_file_kv):
+    """
+    Params:
+        out_file_kv: file path K-V of fping output.
+    Returns:
+        multpile Python dictionaries if succeeded.
+        exit if hit error.
+    """
+    if not out_file_kv or isinstance(out_file_kv, dict) is False:
+        print("{}Invalid parameter: out_file_kv".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    o2m_kv = {}
+    m2m_out = ''
     try:
-        for json_file in json_files_list:
-            json_file_name = open(json_file, 'r')
-            all_json_dict[json_file] = json.load(json_file_name)
-        return all_json_dict
-    except BaseException:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 " cannot load JSON file: " + json_file)
+        o2m_kv = out_file_kv['o2m']
+        m2m_out = out_file_kv['m2m']
+    except KeyError as e:
+        print("{}Tried to extract nsdperf output file info ".format(ERRO) +
+             "but hit KeyError: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
 
+    o2m_thrput_kv = {}
+    o2m_thrputs = []
+    o2m_lat_kv = {}
+    o2m_lat_stddev_kv = {}
+    o2m_rxe_kv = {}
+    o2m_txe_kv = {}
+    o2m_retr_kv = {}
+    for key, val in o2m_kv.items():
+        check_file_exists(val)
+        perf_kv = load_json(val)
+        if perf_kv is None:
+            print("{}Bye!\n".format(QUIT))
+        try:
+            thrput = perf_kv['throughput(MB/sec)']
+            network_lat = perf_kv['networkDelay'][0]['average']
+            network_lat_stddev = perf_kv['networkDelay'][0]['standardDeviation']
+            rxe = perf_kv['netData'][key]['rxerrors']
+            txe = perf_kv['netData'][key]['txerrors']
+            retr = perf_kv['netData'][key]['retransmit']
+        except BaseException as e:
+            print("{}Tried to extract items from 1:m nsdperf ".format(ERRO) +
+                  "test result but hit exception: {}".format(e))
+            print("{}Bye!\n".format(QUIT))
+        o2m_thrput_kv[key] = thrput
+        o2m_thrputs.append(thrput)
+        o2m_lat_kv[key] = network_lat
+        o2m_lat_stddev_kv[key] = network_lat_stddev
+        o2m_rxe_kv[key] = rxe
+        o2m_txe_kv[key] = txe
+        o2m_retr_kv[key] = retr
 
-def load_throughput_tests(logdir, hosts_dictionary, many2many_clients):
-    throughput_dict = {}
-    nsd_lat_dict = {}
-    nsd_std_dict = {}
-    nsd_rxe_dict = {}
-    nsd_rxe_m2m_d = {}
-    nsd_txe_dict = {}
-    nsd_txe_m2m_d = {}
-    nsd_rtr_dict = {}
-    nsd_rtr_m2m_d = {}
-    file_host_dict = {}
-    throughput_json_files_list = []
-    for host in hosts_dictionary.keys():
-        fileurl = logdir + "/nsd_" + host + ".json"
-        file_exists(fileurl)
-        # Lets do a load to check it is a proper file
-        json_loads = json_file_loads(fileurl)
-        if json_loads:
-            throughput_json_files_list.append(fileurl)
-            file_host_dict.update({fileurl: host})
-        else:
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "cannot load JSON for host " +
-                  host +
-                  ". We are going to ignore this host on the results")
-    # We append the mess run
-    mess_file_url = logdir + "/nsd_mess.json"
-    # Lets do a load to check it is a proper file
-    json_loads = json_file_loads(mess_file_url)
-    if json_loads:
-            throughput_json_files_list.append(mess_file_url)
-            file_host_dict.update({mess_file_url: "all at the same time"})
-    else:
-        print(RED +
-              "ERROR: " +
-              NOCOLOR +
-              "cannot load JSON for all at the same time " +
-              ". We are going to ignore this test on the results")
-    # If the list is empty is that failed to load all JSON, no point to go
-    if len(throughput_json_files_list) == 0:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 " cannot load any throughput JSON file")
-    nsd_json = load_json_files_into_dictionary(throughput_json_files_list)
-    for file in throughput_json_files_list:
-        # here we add the metrics we will proces later
-        host_key = file_host_dict[file]
-        throughput_v = Decimal(nsd_json[file]['throughput(MB/sec)'])
-        throughput_dict.update({host_key: throughput_v})
-        n_lt_v = Decimal(nsd_json[file]['networkDelay'][0]['average'])
-        nsd_lat_dict.update({host_key: n_lt_v})
-        n_std = Decimal(nsd_json[file]['networkDelay'][0]['standardDeviation'])
-        nsd_std_dict.update({host_key: n_std})
-        if host_key == "all at the same time":
-            for host in many2many_clients.keys():
-                n_rxe = Decimal(nsd_json[file]['netData'][host]['rxerrors'])
-                nsd_rxe_m2m_d.update({host: n_rxe})
-                n_txe = Decimal(nsd_json[file]['netData'][host]['txerrors'])
-                nsd_txe_m2m_d.update({host: n_txe})
-                n_rtr = Decimal(nsd_json[file]['netData'][host]['retransmit'])
-                nsd_rtr_m2m_d.update({host: n_rtr})
-        else:
-            n_rxe = Decimal(nsd_json[file]['netData'][host_key]['rxerrors'])
-            nsd_rxe_dict.update({host_key: n_rxe})
-            n_txe = Decimal(nsd_json[file]['netData'][host_key]['txerrors'])
-            nsd_txe_dict.update({host_key: n_txe})
-            n_rtr = Decimal(nsd_json[file]['netData'][host_key]['retransmit'])
-            nsd_rtr_dict.update({host_key: n_rtr})
+    o2m_avg_thrput = calc_mean_from_list(o2m_thrputs)
+    o2m_max_thrput = calc_max_from_list(o2m_thrputs)
+    o2m_min_thrput = calc_min_from_list(o2m_thrputs)
+    o2m_thrput_stddev = calc_stddev_from_list(o2m_thrputs, o2m_avg_thrput)
+    o2m_thrput_diff_pct = calc_diff_from_list(o2m_thrputs)
 
-    # lets calculate % diff max min mean etc ...
-    bw_str_list = []
-    # filter "all" out of list of node bandwidths
-    bw_str_list = [str(throughput_dict[k]) for k in throughput_dict
-                   if k != 'all at the same time']
-    pc_diff_bw = pct_diff_list(bw_str_list)
-    max_bw = max_list(bw_str_list)
-    min_bw = min_list(bw_str_list)
-    mean_bw = mean_list(bw_str_list)
-    stddev_bw = stddev_list(bw_str_list, mean_bw)
-    pc_diff_bw = round(pc_diff_bw, 2)
-    mean_bw = round(mean_bw, 2)
-    return (throughput_dict, nsd_lat_dict, nsd_std_dict, pc_diff_bw, max_bw,
-            min_bw, mean_bw, stddev_bw, nsd_rxe_dict, nsd_rxe_m2m_d,
-            nsd_txe_dict, nsd_txe_m2m_d, nsd_rtr_dict, nsd_rtr_m2m_d)
+    check_file_exists(m2m_out)
+    perf_kv = load_json(m2m_out)
+    if perf_kv is None:
+        print("{}Bye!\n".format(QUIT))
 
-
-def load_multiple_fping(logdir, hosts_dictionary):
-    all_fping_dictionary = {}
-    all_fping_dictionary_max = {}
-    all_fping_dictionary_min = {}
-    all_fping_dictionary_stddev = {}
-    mean_all = []
-    max_all = []
-    min_all = []
-    # Loads log file and returns dictionary
-    for srchost in hosts_dictionary.keys():
-        fileurl = os.path.join(logdir, "lat_" + srchost + "_all")
-        file_exists(fileurl)
-        logfping = open(fileurl, 'r')
-        for rawfping in logfping:
-            hostIP = rawfping.split(':')[0]
-            hostIP = hostIP.rstrip(' ')
-            if srchost == hostIP:  # we ignore ourselves
-                continue
-            latencies = rawfping.split(':')[1]
-            latencies = latencies.lstrip(' ')  # Clean up first space
-            latencies = latencies.rstrip('\n')  # Clean up new line character
-            latencies_list = latencies.split(' ')
-            # our mean calculation expect strings. Need to change this when
-            # optimizing
-            mean_all.append(str(mean_list(latencies_list)))
-            max_all.append(max(latencies_list))
-            min_all.append(min(latencies_list))
-        # we use Decimal to round the results
-        mean = Decimal(mean_list(mean_all))
-        mean = round(mean, 2)  # we round to 2 decimals
-        all_fping_dictionary[srchost] = mean
-        all_fping_dictionary_max[srchost] = max_list(max_all)
-        all_fping_dictionary_min[srchost] = min_list(min_all)
-        all_fping_dictionary_stddev[srchost] = stddev_list(mean_all, mean)
-        mean_all = []
-        max_all = []
-        min_all = []
-    return (all_fping_dictionary, all_fping_dictionary_max,
-            all_fping_dictionary_min, all_fping_dictionary_stddev)
-
-
-def save_throughput_to_csv(logdir, throughput_dict):
-    # We save per node and all to all
-    fileurl = os.path.join(logdir, "throughput.csv")
     try:
-        with open(fileurl, 'w') as csv_file:
-            csv_writer = csv.writer(csv_file)
+        clients = perf_kv['client(s)']
+    except KeyError as e:
+        print("{}Tried to extract clients from m:m nsdperf ".format(ERRO) +
+             "test result but hit KeyError: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    try:
+        m2m_thrput = float(perf_kv['throughput(MB/sec)'])
+        m2m_lat = float(perf_kv['networkDelay'][0]['average'])
+        m2m_lat_stddev = float(
+                            perf_kv['networkDelay'][0]['standardDeviation'])
+    except BaseException as e:
+        print("{}Tried to extract summary items from m:m ".format(ERRO) +
+              "nsdperf test result but hit exception: {}".format(e))
+        print("{}Bye!\n".format(QUIT))
+
+    m2m_rxe_kv = {}
+    m2m_txe_kv = {}
+    m2m_retr_kv = {}
+    for cli in clients:
+        try:
+            rxe = perf_kv['netData'][cli]['rxerrors']
+            txe = perf_kv['netData'][cli]['txerrors']
+            retr = perf_kv['netData'][cli]['retransmit']
+        except BaseException as e:
+            print("{}Tried to extract client items from m:m ".format(ERRO) +
+                  "nsdperf test result but hit exception: {}".format(e))
+            print("{}Bye!\n".format(QUIT))
+        m2m_rxe_kv[cli] = rxe
+        m2m_txe_kv[cli] = txe
+        m2m_retr_kv[cli] = retr
+
+    return (o2m_thrput_kv, o2m_lat_kv, o2m_lat_stddev_kv, o2m_rxe_kv,
+            o2m_txe_kv, o2m_retr_kv, o2m_avg_thrput, o2m_max_thrput, o2m_min_thrput,
+            o2m_thrput_stddev, o2m_thrput_diff_pct, m2m_thrput, m2m_lat,
+            m2m_lat_stddev, m2m_rxe_kv, m2m_txe_kv, m2m_retr_kv)
+
+
+def save_throughput_to_csv(
+        logdir,
+        o2m_thrput_kv,
+        m2m_thrput):
+    """
+    Params:
+        logdir: log path.
+        o2m_thrput_kv: one to many throughput performance number.
+        m2m_thrput: many to many throughput performance number.
+    Returns:
+        0 if succeeded.
+        exit if hit error.
+    """
+    err_cnt = 0
+    if not logdir or isinstance(logdir, str) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: logdir".format(ERRO))
+    if os.path.isdir(logdir) is False:
+        err_cnt += 1
+        print("{0}{1} does NOT exist".format(ERRO, logdir))
+    if not o2m_thrput_kv or isinstance(o2m_thrput_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_thrput_kv".format(ERRO))
+    if isinstance(m2m_thrput, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_thrput".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    filepath = os.path.join(logdir, 'nsd_throughput.csv')
+    try:
+        with open(filepath, 'w') as fh:
+            csv_writer = csv.writer(fh)
             csv_writer.writerow(["Host", "Throughput MB/sec"])
-            for host in throughput_dict.keys():
-                host_key = str(host)
-                throughput_v = int(throughput_dict[host])
-                csv_writer.writerow([host_key, throughput_v])
-        print(
-            GREEN +
-            "INFO: " +
-            NOCOLOR +
-            "CSV file with throughput information can be found at " +
-            fileurl
-        )
-    except BaseException:
-        print(
-            RED +
-            "ERROR: " +
-            NOCOLOR +
-            "Cannot write throughput.csv file on " +
-            logdir
-            )
-        sys.exit(1)
+            for key, val in o2m_thrput_kv.items():
+                csv_writer.writerow([key, val])
+            csv_writer.writerow(["manyToMany", m2m_thrput])
+        print('')
+        print("{0}Summary of NSD throughput can be found in {1}".format(
+              INFO, filepath))
+    except BaseException as e:
+        print("{0}Cannot write nsd_throughput.csv file to {1}".format(ERRO,
+              logdir))
+        sys.exit("{}Bye!\n".format(QUIT))
 
 
-def nsd_KPI(min_nsd_throughput,
-            throughput_dict,
-            nsd_lat_dict,
-            nsd_std_dict,
-            pc_diff_bw,
-            max_bw,
-            min_bw,
-            mean_bw,
-            stddev_bw,
-            nsd_rxe_dict,
-            nsd_rxe_m2m_d,
-            nsd_txe_dict,
-            nsd_txe_m2m_d,
-            nsd_rtr_dict,
-            nsd_rtr_m2m_d):
-    errors = 0
-    print("Results for throughput test ")
-    for host in throughput_dict.keys():
-        if throughput_dict[host] < min_nsd_throughput:
-            errors = errors + 1
-            print(RED +
-                  "ERROR: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " the throughput test result is " +
-                  str(throughput_dict[host]) +
-                  " MB/sec. Which is less than the KPI of " +
-                  str(min_nsd_throughput) +
-                  " MB/sec")
+def check_nsd_kpi(
+        o2m_thrput_kv,
+        o2m_avg_thrput,
+        o2m_max_thrput,
+        o2m_min_thrput,
+        o2m_thrput_stddev,
+        o2m_thrput_diff_pct,
+        o2m_lat_kv,
+        o2m_lat_stddev_kv,
+        o2m_rxe_kv,
+        o2m_txe_kv,
+        o2m_retr_kv,
+        m2m_thrput,
+        m2m_lat,
+        m2m_lat_stddev,
+        m2m_rxe_kv,
+        m2m_txe_kv,
+        m2m_retr_kv):
+    """
+    Params:
+        o2m_thrput_kv:
+        o2m_avg_thrput:
+        o2m_max_thrput:
+        o2m_min_thrput:
+        o2m_thrput_stddev:
+        o2m_thrput_diff_pct:
+        o2m_lat_kv:
+        o2m_lat_stddev_kv:
+        o2m_rxe_kv:
+        o2m_txe_kv:
+        o2m_retr_kv:
+        m2m_thrput:
+        m2m_lat:
+        m2m_lat_stddev:
+        m2m_rxe_kv:
+        m2m_txe_kv:
+        m2m_retr_kv:
+    Returns:
+        0 if succeeded.
+        !0 if hit error.
+    """
+    err_cnt = 0
+    if not o2m_thrput_kv or isinstance(o2m_thrput_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_thrput_kv".format(ERRO))
+    if isinstance(o2m_avg_thrput, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_avg_thrput".format(ERRO))
+    if isinstance(o2m_max_thrput, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_max_thrput".format(ERRO))
+    if isinstance(o2m_min_thrput, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_min_thrput".format(ERRO))
+    if isinstance(o2m_thrput_stddev, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_thrput_stddev".format(ERRO))
+    if isinstance(o2m_thrput_diff_pct, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_thrput_diff_pct".format(ERRO))
+    if not o2m_lat_kv or isinstance(o2m_lat_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_lat_kv".format(ERRO))
+    if not o2m_lat_stddev_kv or isinstance(o2m_lat_stddev_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_lat_stddev_kv".format(ERRO))
+    if not o2m_rxe_kv or isinstance(o2m_rxe_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_rxe_kv".format(ERRO))
+    if not o2m_txe_kv or isinstance(o2m_txe_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_txe_kv".format(ERRO))
+    if not o2m_retr_kv or isinstance(o2m_retr_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: o2m_retr_kv".format(ERRO))
+    if isinstance(m2m_thrput, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_thrput".format(ERRO))
+    if isinstance(m2m_lat, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_lat".format(ERRO))
+    if isinstance(m2m_lat_stddev, (int, float)) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_lat_stddev".format(ERRO))
+    if not m2m_rxe_kv or isinstance(m2m_rxe_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_rxe_kv".format(ERRO))
+    if not m2m_txe_kv or isinstance(m2m_txe_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_txe_kv".format(ERRO))
+    if not m2m_retr_kv or isinstance(m2m_retr_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: m2m_retr_kv".format(ERRO))
+    if err_cnt > 0:
+        return err_cnt
+
+    print("{}Throughput results of nsdperf 1:m test".format(INFO))
+    for key, val in o2m_thrput_kv.items():
+        if float(val) < KPI_NSD_THROUGH:
+            err_cnt += 1
+            print("{0}{1} has {2} MB/sec network throughput ".format(ERRO,
+                  key, val) + "which is less than the required " +
+                  "{} MB/sec throughput KPI".format(KPI_NSD_THROUGH))
         else:
-            print(GREEN +
-                  "OK: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " the throughput test result is " +
-                  str(throughput_dict[host]) +
-                  " MB/sec. Which is higher than the KPI of " +
-                  str(min_nsd_throughput) +
-                  " MB/sec")
-
-    if pc_diff_bw < 79:
-        errors = errors + 1
-        print(RED +
-              "ERROR: " +
-              NOCOLOR +
-              "the difference of throughput between maximum and minimum " +
-              "values is " + str(round((100 - pc_diff_bw), 2)) + "%, which is more " +
-              "than 20% defined on the KPI")
+            print("{0}{1} has {2} MB/sec network throughput ".format(INFO,
+                  key, val) + "which meets the required " +
+                  "{} MB/sec throughput KPI".format(KPI_NSD_THROUGH))
+    print("{0}The average network throughput is {1} MB/sec".format(INFO,
+          o2m_avg_thrput))
+    print("{0}The maximum network throughput is {1} MB/sec".format(INFO,
+          o2m_max_thrput))
+    print("{0}The minimum network throughput is {1} MB/sec".format(INFO,
+          o2m_min_thrput))
+    print("{}The standard deviation of network throughput ".format(INFO) +
+          "is {} MB/sec".format(o2m_thrput_stddev))
+    print("{}Define difference percentage as 100 * (max - min) ".format(
+          INFO) + "/ max")
+    if o2m_thrput_diff_pct > KPI_DIFF_PCT:
+        err_cnt += 1
+        print("{0}All hosts have {1}% network throughput ".format(ERRO,
+              o2m_thrput_diff_pct) + "difference which is more than " +
+              "the required {}% difference KPI".format(KPI_DIFF_PCT))
     else:
-        print(GREEN +
-              "OK: " +
-              NOCOLOR +
-              "the difference of throughput between maximum and minimum " +
-              "values is " + str(round((100 - pc_diff_bw), 2)) + "%, which is less " +
-              "than 20% defined on the KPI")
+        print("{0}All hosts have {1}% network throughput ".format(INFO,
+              o2m_thrput_diff_pct) + "difference which meets the " +
+              "required {}% difference KPI".format(KPI_DIFF_PCT))
 
-    print("")
-    print("The following metrics are not part of the KPI and " +
-          "are shown for informational purposes only")
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The maximum throughput value is " + str(max_bw))
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The minimum throughput value is " + str(min_bw))
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The mean throughput value is " + str(mean_bw))
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The standard deviation throughput value is " + str(stddev_bw))
-    for host in nsd_lat_dict.keys():
-        print(GREEN +
-              "INFO: " +
-              NOCOLOR +
-              "The average NSD latency for " +
-              str(host) +
-              " is " +
-              str(nsd_lat_dict[host]) +
-              " msec")
-    for host in nsd_std_dict.keys():
-        print(GREEN +
-              "INFO: " +
-              NOCOLOR +
-              "The standard deviation of NSD latency for " +
-              str(host) +
-              " is " +
-              str(nsd_std_dict[host]) +
-              " msec")
-    for host in nsd_rxe_dict.keys():
-        print(GREEN +
-              "INFO: " +
-              NOCOLOR +
-              "The packet Rx error count for throughput test on " +
-              str(host) +
-              " is equal to " +
-              str(nsd_rxe_dict[host]) +
-              " packet[s]")
-    for host in nsd_txe_dict.keys():
-        print(GREEN +
-              "INFO: " +
-              NOCOLOR +
-              "The packet Tx error count for throughput test on " +
-              str(host) +
-              " is equal to " +
-              str(nsd_txe_dict[host]) +
-              " packet[s]")
-    for host in nsd_rtr_dict.keys():
-        print(GREEN +
-              "INFO: " +
-              NOCOLOR +
-              "The packet retransmit count for throughput test on " +
-              str(host) +
-              " is equal to " +
-              str(nsd_rtr_dict[host]) +
-              " packet[s]")
+    print('')
+    print("{}Latency results of nsdperf 1:m test".format(INFO))
+    for key, val in o2m_lat_kv.items():
+        print("{0}{1} has {2} msec average NSD latency".format(INFO, key,
+              val))
+    for key, val in o2m_lat_stddev_kv.items():
+        print("{0}{1} has {2} msec standard deviation of NSD ".format(INFO,
+              key, val) + "latency")
+
+    print('')
+    print("{}Packet results of nsdperf 1:m test".format(INFO))
+    for key, val in o2m_rxe_kv.items():
+        print("{0}{1} has {2} packet NSD Rx error".format(INFO, key, val))
+    for key, val in o2m_txe_kv.items():
+        print("{0}{1} has {2} packet NSD Tx error".format(INFO, key, val))
+    for key, val in o2m_retr_kv.items():
+        print("{0}{1} has retransmit {2} NSD packet".format(INFO, key,
+              val))
+
+    print('')
+    print("{}Throughput results of nsdperf m:m test".format(INFO))
+    print("{0}Many to many network throughput is {1} MB/sec".format(INFO,
+          m2m_thrput))
+
+    print('')
+    print("{}Latency results of nsdperf m:m test".format(INFO))
+    print("{0}Many to many average NSD latency is {1} msec".format(INFO,
+          m2m_lat))
+    print("{}Many to many standard deviation of NSD ".format(INFO) +
+          "latency is {} msec".format(m2m_lat_stddev))
+
+    print('')
+    print("{}Packet results of nsdperf m:m test".format(INFO))
     packets_rxe = 0
-    for host in nsd_rxe_m2m_d.keys():
-        packets_rxe = packets_rxe + nsd_rxe_m2m_d[host]
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The packet Rx error count for throughput test on many to many" +
-          " is equal to " +
-          str(packets_rxe) +
-          " packet[s]")
+    for pkt in m2m_rxe_kv.values():
+        packets_rxe += pkt
+    print("{0}Many to many NSD Rx total error is {1} packet".format(INFO,
+          packets_rxe))
     packets_txe = 0
-    for host in nsd_txe_m2m_d.keys():
-        packets_txe = packets_txe + nsd_txe_m2m_d[host]
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The packet Tx error count for throughput test on many to many" +
-          " is equal to " +
-          str(packets_txe) +
-          " packet[s]")
+    for pkt in m2m_txe_kv.values():
+        packets_txe += pkt
+    print("{0}Many to many NSD Rx total error is {1} packet".format(INFO,
+          packets_txe))
     packets_rtr = 0
-    for host in nsd_rtr_m2m_d.keys():
-        packets_rtr = packets_rtr + nsd_rtr_m2m_d[host]
-    print(GREEN +
-          "INFO: " +
-          NOCOLOR +
-          "The packet retransmit count for throughput test many to many" +
-          " is equal to " +
-          str(packets_rtr) +
-          " packet[s]")
-    return errors
+    for pkt in m2m_retr_kv.values():
+        packets_rtr += pkt
+    print("{0}Many to many NSD total retransmit is {1} packet".format(INFO,
+          packets_rtr))
+    return err_cnt
 
 
-def fping_KPI(
-        fping_dictionary,
-        fping_dictionary_max,
-        fping_dictionary_min,
-        fping_dictionary_stddev,
+def check_fping_kpi(
+        fping_avg_lat_kv,
+        fping_max_lat_kv,
+        fping_min_lat_kv,
+        fping_stddev_kv,
         test_string,
-        max_avg_latency,
-        max_max_latency,
-        max_stddev_latency,
-        rdma_test,
-        roce_test):
-    errors = 0
+        rdma_test=False):
+    """
+    Params:
+        fping_avg_lat_kv:
+        fping_max_lat_kv:
+        fping_min_lat_kv:
+        fping_stddev_kv:
+        test_string:
+        rdma_test:
+    Returns:
+        0 if succeeded.
+        !0 if hit error.
+    """
+    err_cnt = 0
+    if not fping_avg_lat_kv or isinstance(fping_avg_lat_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fping_avg_lat_kv".format(ERRO))
+    if not fping_max_lat_kv or \
+        isinstance(fping_max_lat_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fping_max_lat_kv".format(ERRO))
+    if not fping_min_lat_kv or \
+        isinstance(fping_min_lat_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fping_min_lat_kv".format(ERRO))
+    if not fping_stddev_kv or \
+        isinstance(fping_stddev_kv, dict) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fping_stddev_kv".format(ERRO))
+    if not test_string or isinstance(test_string, str) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: test_string".format(ERRO))
+    if isinstance(rdma_test, bool) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: rdma_test".format(ERRO))
+    if err_cnt > 0:
+        return err_cnt
 
-    print("Results for ICMP latency test " + test_string + "")
-    max_avg_latency_str = str(round(max_avg_latency, 2))
-    max_max_latency_str = str(round(max_max_latency, 2))
-    max_stddev_latency_str = str(round(max_stddev_latency, 2))
-    for host in fping_dictionary.keys():
-        if fping_dictionary[host] >= max_avg_latency:
-            if rdma_test or roce_test:
-                if fping_dictionary[host] >= 2*max_avg_latency:
-                    errors = errors + 1  # yes yes +=
-                    print(RED +
-                        "ERROR: " +
-                        NOCOLOR +
-                        "on host " +
-                        host +
-                        " the " +
-                        test_string +
-                        " average ICMP latency is " +
-                        str(fping_dictionary[host]) +
-                        " msec. Which is higher than the 2*KPI of " +
-                        max_avg_latency_str +
-                        " msec")
+    print('')
+    print("{0}ICMP latency results of fping {1} test".format(INFO,
+          test_string))
+    for key, val in fping_avg_lat_kv.items():
+        if val > KPI_MAX_LATENCY:
+            if rdma_test is True:
+                if val > 2 * KPI_AVG_LATENCY:
+                    err_cnt += 1
+                    print("{0}{1} has {2} msec ICMP average ".format(ERRO,
+                          key, val) + "latency which is greater than " +
+                          "the duple required average latency KPI " +
+                          "{} msec".format(KPI_AVG_LATENCY))
                 else:
-                    # It is more than KPI but less than double on RDMA
-                    print(YELLOW +
-                        "WARNING: " +
-                        NOCOLOR +
-                        "on host " +
-                        host +
-                        " the " +
-                        test_string +
-                        " average ICMP latency is " +
-                        str(fping_dictionary[host]) +
-                        " msec. Which is higher than the KPI of " +
-                        max_avg_latency_str +
-                        " msec")
+                    print("{0}{1} has {2} msec ICMP average ".format(WARN,
+                          key, val) + "latency which is greater than " +
+                          "the required average latency KPI {} ".format(
+                          KPI_AVG_LATENCY) + "msec")
             else:
-                errors = errors + 1  # yes yes +=
-                print(RED +
-                      "ERROR: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " average ICMP latency is " +
-                      str(fping_dictionary[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_avg_latency_str +
-                      " msec")
+                err_cnt += 1
+                print("{0}{1} has {2} msec ICMP average ".format(ERRO, key,
+                      val) + "latency which is greater than the required " +
+                      "average latency KPI {} msec".format(KPI_AVG_LATENCY))
         else:
-            print(GREEN +
-                  "OK: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " the " +
-                  test_string +
-                  " average ICMP latency is " +
-                  str(fping_dictionary[host]) +
-                  " msec. Which is lower than the KPI of " +
-                  max_avg_latency_str +
-                  " msec")
+            print("{0}{1} has {2} msec ICMP average latency ".format(INFO,
+                  key, val) + "which meets the required average latency " +
+                  "KPI {} msec".format(KPI_AVG_LATENCY))
 
-        if fping_dictionary_max[host] >= max_max_latency:
-            if rdma_test or roce_test:
-                print(YELLOW +
-                      "WARNING: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " maximum ICMP latency is " +
-                      str(fping_dictionary_max[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_max_latency_str +
-                      " msec")
+    print('')
+    for key, val in fping_max_lat_kv.items():
+        if val > KPI_MAX_LATENCY:
+            if rdma_test is True:
+                print("{0}{1} has {2} msec ICMP maximum ".format(WARN, key,
+                      val) + "latency which is greater than the required " +
+                      "maximum latency KPI {} msec".format(KPI_MAX_LATENCY))
             else:
-                errors = errors + 1
-                print(RED +
-                      "ERROR: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " maximum ICMP latency is " +
-                      str(fping_dictionary_max[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_max_latency_str +
-                      " msec")
+                err_cnt += 1
+                print("{0}{1} has {2} msec ICMP maximum ".format(ERRO, key,
+                      val) + "latency which is greater than the required " +
+                      "maximum latency KPI {} msec".format(KPI_MAX_LATENCY))
         else:
-            print(GREEN +
-                  "OK: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " the " +
-                  test_string +
-                  " maximum ICMP latency is " +
-                  str(fping_dictionary_max[host]) +
-                  " msec. Which is lower than the KPI of " +
-                  max_max_latency_str +
-                  " msec")
+            print("{0}{1} has {2} msec ICMP maximum latency ".format(INFO,
+                  key, val) + "which meets the required maximum latency " +
+                  "KPI {} msec".format(KPI_MAX_LATENCY))
 
-        if fping_dictionary_min[host] >= max_avg_latency:
-            if rdma_test:
-                print(YELLOW +
-                      "WARNING: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " minimum ICMP latency is " +
-                      str(fping_dictionary_min[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_avg_latency_str +
-                      " msec")
+    print('')
+    for key, val in fping_min_lat_kv.items():
+        if val > KPI_AVG_LATENCY:
+            if rdma_test is True:
+                print("{0}{1} has {2} msec ICMP minimum ".format(WARN, key,
+                      val) + "latency which is greater than the required " +
+                      "average latency KPI {} msec".format(KPI_AVG_LATENCY))
             else:
-                errors = errors + 1
-                print(RED +
-                      "ERROR: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " minimum ICMP latency is " +
-                      str(fping_dictionary_min[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_avg_latency_str +
-                      " msec")
+                err_cnt += 1
+                print("{0}{1} has {2} msec ICMP minimum ".format(ERRO, key,
+                      val) + "latency which is greater than the required " +
+                      "average latency KPI {} msec".format(KPI_AVG_LATENCY))
         else:
-            print(GREEN +
-                  "OK: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " the " +
-                  test_string +
-                  " minimum ICMP latency is " +
-                  str(fping_dictionary_min[host]) +
-                  " msec. Which is lower than the KPI of " +
-                  max_avg_latency_str +
-                  " msec")
+            print("{0}{1} has {2} msec ICMP minimum latency ".format(INFO,
+                  key, val) + "which meets the required average latency " +
+                  "KPI {} msec".format(KPI_AVG_LATENCY))
 
-        if fping_dictionary_stddev[host] >= max_stddev_latency:
-            if rdma_test or roce_test:
-                print(YELLOW +
-                      "WARNING: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " standard deviation of ICMP latency is " +
-                      str(fping_dictionary_stddev[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_stddev_latency_str +
-                      " msec")
+    print('')
+    for key, val in fping_stddev_kv.items():
+        if val > KPI_STDDEV_LAT:
+            if rdma_test is True:
+                print("{0}{1} has {2} msec ICMP latency ".format(WARN, key,
+                      val) + "standard deviation which is greater than " +
+                      "the required latency standard deviation KPI " +
+                      "{} msec".format(KPI_STDDEV_LAT))
             else:
-                errors = errors + 1
-                print(RED +
-                      "ERROR: " +
-                      NOCOLOR +
-                      "on host " +
-                      host +
-                      " the " +
-                      test_string +
-                      " standard deviation of ICMP latency is " +
-                      str(fping_dictionary_stddev[host]) +
-                      " msec. Which is higher than the KPI of " +
-                      max_stddev_latency_str +
-                      " msec")
+                err_cnt += 1
+                print("{0}{1} has {2} msec ICMP latency ".format(ERRO, key,
+                      val) + "standard deviation which is greater than " +
+                      "the required latency standard deviation KPI " +
+                      "{} msec".format(KPI_STDDEV_LAT))
         else:
-            print(GREEN +
-                  "OK: " +
-                  NOCOLOR +
-                  "on host " +
-                  host +
-                  " the " +
-                  test_string +
-                  " standard deviation of ICMP latency is " +
-                  str(fping_dictionary_stddev[host]) +
-                  " msec. Which is lower than the KPI of " +
-                  max_stddev_latency_str +
-                  " msec")
-        print("")
-
-    return errors  # Use this to give number of nodes is not exact in all cases
+            print("{0}{1} has {2} msec ICMP latency standard ".format(INFO,
+                  key, val) + "deviation which meets the required " +
+                  "latency standard deviation KPI {} msec".format(
+                  KPI_STDDEV_LAT))
+    print('')
+    return err_cnt
 
 
-def test_ssh(hosts_dictionary):
-    for host in hosts_dictionary.keys():
+def check_passwordless_ssh(hosts):
+    """
+    Params:
+        hosts: hostname list.
+    Returns:
+        0 if succeeded.
+        exit if hit error.
+    """
+    if not hosts or isinstance(hosts, list) is False:
+        print("{}Invalid parameter: hosts".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
+
+    err_cnt = 0
+    for host in hosts:
+        nokey_check_cmds = ['ssh',
+                            '-o', 'StrictHostKeyChecking=no',
+                            '-o', 'BatchMode=yes',
+                            '-o', 'ConnectTimeout=5',
+                            '-o', 'LogLevel=error',
+                            host,
+                            'uname']
         try:
-            ssh_return_code = subprocess.call(['ssh',
-                                               '-o StrictHostKeyChecking=no',
-                                               '-o BatchMode=yes',
-                                               '-o ConnectTimeout=5',
-                                               '-o LogLevel=error',
-                                               host,
-                                               'uname'],
-                                              stdout=DEVNULL,
-                                              stderr=DEVNULL)
-            if ssh_return_code == 0:
-                print(GREEN + "OK: " + NOCOLOR +
-                      "SSH with node " + host + " works")
-            else:
-                sys.exit(
-                    RED +
-                    "QUIT: " +
-                    NOCOLOR +
-                    "cannot run ssh to " +
-                    host +
-                    ". Please fix this problem before running this tool again")
-        except Exception:
-            sys.exit(
-                RED +
-                "QUIT: " +
-                NOCOLOR +
-                "cannot run ssh to " +
-                host +
-                ". Please fix this problem before running this tool again")
+            child = Popen(nokey_check_cmds, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            _, _ = child.communicate()
+            rc = child.returncode
+        except BaseException as e:
+            err_cnt += 1
+            print("{0}Tried to run cmd '{1}' but hit exception: ".format(ERRO,
+                  " ".join(nokey_check_cmds)) + "{}".format(e))
+        if rc == 0:
+            print("{0}localhost succeeded to passwordless ssh {1}".format(INFO,
+                  host))
+        else:
+            err_cnt += 1
+            print("{0}localhost failed to passwordless ssh {1}".format(ERRO,
+                  host))
 
-        # Now lets see if the host keys are OK
+        key_check_cmds = ['ssh',
+                          '-o', 'StrictHostKeyChecking=yes',
+                          '-o', 'BatchMode=yes',
+                          '-o', 'ConnectTimeout=5',
+                          '-o', 'LogLevel=error',
+                          host,
+                          'uname']
         try:
-            ssh_return_code = subprocess.call(['ssh',
-                                               '-o StrictHostKeyChecking=yes',
-                                               '-o BatchMode=yes',
-                                               '-o ConnectTimeout=5',
-                                               '-o LogLevel=error',
-                                               host,
-                                               'uname'],
-                                              stdout=DEVNULL,
-                                              stderr=DEVNULL)
-            if ssh_return_code == 0:
-                print(GREEN + "OK: " + NOCOLOR +
-                      "SSH with node " + host + " works with strict host key checks")
-            else:
-                sys.exit(
-                    RED +
-                    "QUIT: " +
-                    NOCOLOR +
-                    "cannot run ssh to " +
-                    host +
-                    " with strict host key checks. Please fix this problem " +
-                    "before running this tool again")
-        except Exception:
-            sys.exit(
-                RED +
-                "QUIT: " +
-                NOCOLOR +
-                "cannot run ssh to " +
-                host +
-                " with strict host key checks. Please fix this problem " +
-                "before running this tool again")
-    print("")
+            child = Popen(key_check_cmds, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            _, _ = child.communicate()
+            rc = child.returncode
+        except BaseException as e:
+            err_cnt += 1
+            print("{0}Tried to run cmd '{1}' but hit exception: ".format(ERRO,
+                  ' '.join(key_check_cmds)) + "{}".format(e))
+            continue
+        if rc == 0:
+            print("{0}localhost succeeded to passwordless ssh {1} ".format(INFO,
+                  host) + "with strict host key checking")
+        else:
+            err_cnt += 1
+            print("{0}localhost failed to passwordless ssh {1} ".format(ERRO,
+                  host) + "with strict host key checking")
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
+    else:
+        print('')
+        return 0
 
 
 def print_end_summary(
-        a_avg_fp_err,
-        a_nsd_err,
+        fp_err_cnt,
+        nsd_err_cnt,
         acceptance_flag):
-    # End summary and say goodbye
-    passed = True
-    print("")
-    print("The summary of this run:")
-    print("")
+    """
+    Params:
+        fp_err_cnt:
+        nsd_err_cnt:
+        acceptance_flag:
+    Returns:
+        0 if succeeded.
+        !0 if hit error.
+    """
+    err_cnt = 0
+    if isinstance(fp_err_cnt, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: fp_err_cnt".format(ERRO))
+    if isinstance(nsd_err_cnt, int) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: nsd_err_cnt".format(ERRO))
+    if isinstance(acceptance_flag, bool) is False:
+        err_cnt += 1
+        print("{}Invalid parameter: acceptance_flag".format(ERRO))
+    if err_cnt > 0:
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    if a_avg_fp_err > 0:
-        print(RED + "\tThe 1:n ICMP latency test failed " +
-              str(a_avg_fp_err) + " time[s]" + NOCOLOR)
-        passed = False
+    print('')
+    print("{}Summary of this instance".format(INFO))
+    if fp_err_cnt == 0:
+        print("{}All fping tests are passed".format(INFO))
+    elif fp_err_cnt == 1:
+        print("{}The fping tests failed 1 time".format(ERRO))
     else:
-        print(
-            GREEN +
-            "\tThe 1:n ICMP average latency was successful in all nodes" +
-            NOCOLOR)
+        print("{0}The fping tests failed {1} times".format(ERRO,
+              fp_err_cnt))
+    err_cnt += fp_err_cnt
 
-    if a_nsd_err > 0:
-        print(RED + "\tThe 1:n throughput test failed " +
-              str(a_nsd_err) + " time[s]" + NOCOLOR)
-        passed = False
+    if nsd_err_cnt == 0:
+        print("{}All nsdperf tests are passed".format(INFO))
+    elif nsd_err_cnt == 1:
+        print("{}The nsdperf tests failed 1 time".format(ERRO))
     else:
-        print(
-            GREEN +
-            "\tThe 1:n throughput test was successful in all nodes" +
-            NOCOLOR)
-    print("")
+        print("{0}The nsdperf tests failed {1} times".format(ERRO,
+              nsd_err_cnt))
+    err_cnt += nsd_err_cnt
+    print('')
 
-    if passed:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "All tests have passed" +
-            NOCOLOR)
+    if err_cnt == 0:
+        if acceptance_flag is True:
+            print("{}All network tests have passed. You ".format(INFO) +
+                  "can proceed to the next step")
+        else:
+            print("{}This test instance is invalid although ".format(ERRO) +
+                  "all network tests passed. You cannot move to the " +
+                  "next step")
     else:
-        print(
-            RED +
-            "ERROR: " +
-            NOCOLOR +
-            "All tests must be passed to certify the environment " +
-            "before you proceed to the next step" +
-            NOCOLOR)
-
-    if acceptance_flag is True and passed is True:
-        print(
-            GREEN +
-            "OK: " +
-            NOCOLOR +
-            "You can proceed to the next step" +
-            NOCOLOR)
-        valid_test = 0
-    else:
-        print(
-            RED +
-            "ERROR: " +
-            NOCOLOR +
-            "This test instance is invalid because KPI was lower than " +
-            "requirement or parameters like count, runtime was " +
-            "not enough. You cannot proceed to the next step" +
-            NOCOLOR)
-        valid_test = 5
-    print("")
-    return (a_avg_fp_err + a_nsd_err + valid_test)
+        print("{}Not all network tests passed. You cannot ".format(ERRO) +
+              "move to the next step")
+    print('')
+    return err_cnt
 
 
 def main():
-    #Check files permissions
-    fatal_error = check_permission_files()
-    if fatal_error:
-        sys.exit(RED + "QUIT: " + NOCOLOR + "there are files with "+
-                 "unexpected permissions or non existing\n")
+    """
+    Params:
+    Returns:
+        0 if succeeded.
+        !0 if hit error.
+        exit if hit certain error.
+    """
+    files = [HOST_FL,
+             DEPE_PKG,
+             NSDTOOL,
+             'nsdperf.C',
+             'makefile',]
+    check_files_are_readable(files)
 
-    # Parsing input
     fping_count, ttime_per_inst, test_thread, para_conn, buff_size, \
-    socket_size, cli_hosts, hosts_dictionary, rdma_test, rdma_ports_list, \
-    roce_test, roce_ports_list, no_rpm_check, save_hosts = \
-        parse_arguments()
-    rdma_ports_csv_mlx = []
-    roce_ports_csv_mlx = []
+    socket_size, is_hosts_input, host_kv, rdma_test, rdma_ports, \
+    no_rpm_check, save_hosts = parse_arguments()
 
-    # JSON loads
-    os_dictionary = load_json("supported_OS.json")
-    packages_dictionary = load_json("packages.json")
+    if not is_hosts_input:
+        host_kv = load_json(HOST_FL)
+        if host_kv is None:
+            print("{0}Please populate {1} with hosts ".format(ERRO, HOST_FL) +
+                  "or use '--hosts' option to specify hosts")
+            sys.exit("{}Bye!\n".format(QUIT))
 
-    # Check OS
-    linux_distribution = check_distribution()
-    if linux_distribution in ["redhat", "centos"]:
-        redhat8 = check_os_redhat(os_dictionary)
-    else:
-        sys.exit(RED + "QUIT: " + NOCOLOR +
-                 "this is not a supported Linux distribution for this tool\n")
-    packages_roce_dictionary = None
-    if redhat8:
-        packages_rdma_dictionary = load_json("packages_rdma_rh8.json")
-        packages_roce_dictionary = load_json("packages_roce_rh8.json")
-    else:
-        packages_rdma_dictionary = load_json("packages_rdma.json")
+    hosts = []
+    try:
+        hosts = list(host_kv.keys())
+    except BaseException as e:
+        print("{}Tried to extract hosts but hit ".format(ERRO) +
+              "exception: {}".format(e))
+        sys.exit("{}Bye!\n".format(QUIT))
+    if not hosts:
+        print("{}Failed to get valid hosts".format(ERRO))
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    if not cli_hosts:
-        hosts_dictionary = load_json("hosts.json")
+    rc = are_hosts_ipv4(hosts)
+    if rc != 0:
+        print("{0}Not all hosts are valid IPv4".format(ERRO, hosts))
+        sys.exit("{}Bye!\n".format(QUIT))
 
-    # Check hosts are IP addresses
-    check_hosts_are_ips(hosts_dictionary)
+    show_header(VERSION, fping_count, ttime_per_inst, test_thread,
+                para_conn, buff_size, socket_size)
+    estimate_runtime(hosts, fping_count, ttime_per_inst)
 
-    # Check hosts are 2 to 64
-    check_hosts_number(hosts_dictionary)
+    print('')
+    while True:
+        print("Type 'y' to continue, 'n' to stop")
+        try:
+            ori_choice = input("Continue? <y/n>: ")
+        except KeyboardInterrupt as e:
+            print("\n{0}Hit KeyboardInterrupt".format(ERRO))
+            sys.exit("{}Bye!\n".format(QUIT))
+        choice = ori_choice.lower()
+        if choice == 'y':
+            print('')
+            break
+        if choice == 'n':
+            print('')
+            print("{0}You have typed '{1}'".format(INFO, ori_choice))
+            sys.exit("{}Bye!\n".format(QUIT))
 
-    # Initial header
-    json_version = get_json_versions(
-                                    os_dictionary,
-                                    packages_dictionary,
-                                    packages_roce_dictionary,
-                                    packages_rdma_dictionary)
-    estimated_runtime_str = str(estimate_runtime(hosts_dictionary,
-                                fping_count, ttime_per_inst))
-    show_header(VERSION, json_version, estimated_runtime_str, fping_count,
-                ttime_per_inst, test_thread, para_conn, buff_size,
-                socket_size)
-
-    # JSON hosts write
     if save_hosts:
-        write_json_file_from_dictionary(hosts_dictionary, "hosts.json")
+        rc = dump_json(host_kv, HOST_FL)
+        if rc != 0:
+            sys.exit("{}Bye!\n".format(QUIT))
 
+    check_localhost_is_in_hosts(hosts)
 
-    # Check local node is included on the test
-    check_localnode_is_in(hosts_dictionary)
+    check_passwordless_ssh(hosts)
 
-    # Check SSH
-    test_ssh(hosts_dictionary)
-
-    # Check packages are installed
-    print("Pre-flight generic checks:")
-    if no_rpm_check:
-        print(YELLOW + "WARNING: " + NOCOLOR +
-              "you have disabled RPM checks, things might break")
+    if no_rpm_check is True:
+        print("{}RPM package check has been ignored".format(WARN))
     else:
-        host_packages_check(hosts_dictionary, packages_dictionary)
+        hs_type = ''
+        if rdma_test is True:
+            hs_type = 'rdma'
+        pkg_kv = load_json(DEPE_PKG)
+        if pkg_kv is None:
+            sys.exit("{}Bye!\n".format(QUIT))
+        try:
+            json_ver = pkg_kv['Version']
+        except KeyError as e:
+            print("{0}Tried to get file version of {1} ".format(ERRO,
+                  DEPE_PKG) + "but hit KeyError: {}".format(e))
+            sys.exit("{}Bye!\n".format(QUIT))
+        print("{}Check if required package is available ".format(INFO) +
+              "according to {0} with version {1}".format(DEPE_PKG,
+              json_ver))
+        check_package_on_host(hosts, pkg_kv, hs_type)
 
-    #Check firewalld is down
-    firewalld_check(hosts_dictionary)
-    # Check TCP port 6668 is not in use. Limited from view of this host
-    check_tcp_port_free(hosts_dictionary, 6668)
-    print("")
+    check_firewalld_service(hosts)
+    check_tcp_port(hosts, 6668)
+    print('')
 
-    # If RDMA lets get the ports on a dictionary
-    if rdma_test:
-        # Lets check that we have the RDMA needed SW
-        print("Pre-flight RDMA checks:")
-        if no_rpm_check:
-            print(YELLOW + "WARNING: " + NOCOLOR +
-                  "you have disabled RPM checks, things might break")
-        else:
-            host_packages_check(hosts_dictionary, packages_rdma_dictionary)
-        rdma_port_error, rdma_ports_csv_mlx = check_rdma_ports(
-                                                            hosts_dictionary,
-                                                            rdma_ports_list)
-        if not rdma_port_error:
-            print(GREEN + "OK: " + NOCOLOR +
-                  "all RDMA ports are up on all nodes")
-        else:
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                     "not all RDMA ports are up on all nodes\n")
-        print("")
+    mlx_port_csv = []
+    if rdma_test is True:
+        mlx_port_csv = get_rdma_mlx_ports(hosts, rdma_ports)
 
-    # If RoCE lets get the ports on a dictionary
-    if roce_test:
-        # Lets check that we have the RoCE needed SW
-        print("Pre-flight RoCE checks:")
-        if no_rpm_check:
-            print(YELLOW + "WARNING: " + NOCOLOR +
-                  "you have disabled RPM checks, things might break")
-        else:
-            host_packages_check(hosts_dictionary, packages_roce_dictionary)
-        roce_port_error, roce_ports_csv_mlx = check_roce_ports(
-                                                            hosts_dictionary,
-                                                            roce_ports_list)
-        if not roce_port_error:
-            print(GREEN + "OK: " + NOCOLOR +
-                  "all RoCE ports are up on all nodes")
-        else:
-            sys.exit(RED + "QUIT: " + NOCOLOR +
-                     "not all RoCE ports are up on all nodes\n")
-        print("")
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    logdir = create_local_log_dir(timestamp)
+    rmt_logdir = remotely_create_log_dir(hosts, timestamp)
 
-    # Run
-    log_dir_timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    logdir = create_local_log_dir(log_dir_timestamp)
-    create_log_dir(hosts_dictionary, log_dir_timestamp)
-    latency_test(hosts_dictionary, logdir, fping_count)
-    many2many_clients = throughput_test(hosts_dictionary,
-                                        logdir,
-                                        ttime_per_inst,
-                                        test_thread,
-                                        para_conn,
-                                        buff_size,
-                                        socket_size,
-                                        rdma_test,
-                                        rdma_ports_csv_mlx,
-                                        roce_test,
-                                        roce_ports_csv_mlx)
+    fping_out_kv = run_fping_test(hosts, logdir, fping_count)
+    nsdperf_out_kv = run_nsdperf_test(
+                         hosts,
+                         logdir,
+                         ttime_per_inst,
+                         test_thread,
+                         para_conn,
+                         buff_size,
+                         socket_size,
+                         rdma_test,
+                         mlx_port_csv)
 
     # Load results
-    all_fping_dictionary, all_fping_dictionary_max, all_fping_dictionary_min, \
-        all_fping_dictionary_stddev = load_multiple_fping(logdir,
-                                                          hosts_dictionary)
-    throughput_dict, nsd_lat_dict, nsd_std_dict, pc_diff_bw, max_bw, min_bw, \
-        mean_bw, stddev_bw, nsd_rxe_dict, nsd_rxe_m2m_d, nsd_txe_dict, \
-        nsd_txe_m2m_d, nsd_rtr_dict, nsd_rtr_m2m_d = load_throughput_tests(
-                                                        logdir,
-                                                        hosts_dictionary,
-                                                        many2many_clients)
+    all_fping_avg_lat_kv, all_fping_max_lat_kv, all_fping_min_lat_kv, \
+    all_fping_stddev_kv = load_fping_test_result(fping_out_kv)
+
+    o2m_thrput_kv, o2m_lat_kv, o2m_lat_stddev_kv, o2m_rxe_kv, o2m_txe_kv, \
+    o2m_retr_kv, o2m_avg_thrput, o2m_max_thrput, o2m_min_thrput, \
+    o2m_thrput_stddev, o2m_thrput_diff_pct, m2m_thrput, m2m_lat, \
+    m2m_lat_stddev, m2m_rxe_kv, m2m_txe_kv, m2m_retr_kv = \
+        load_nsdperf_test_result(nsdperf_out_kv)
 
     # Compare againsts KPIs
-    print("")
-    all_avg_fping_errors = fping_KPI(
-        all_fping_dictionary,
-        all_fping_dictionary_max,
-        all_fping_dictionary_min,
-        all_fping_dictionary_stddev,
-        "1:n",
-        KPI_AVG_LATENCY,
-        KPI_MAX_LATENCY,
-        KPI_STDDEV_LTNC,
-        rdma_test,
-        roce_test)
-    all_nsd_errors = nsd_KPI(KPI_NSD_THROUGH, throughput_dict, nsd_lat_dict,
-                             nsd_std_dict, pc_diff_bw, max_bw, min_bw,
-                             mean_bw, stddev_bw, nsd_rxe_dict, nsd_rxe_m2m_d,
-                             nsd_txe_dict, nsd_txe_m2m_d, nsd_rtr_dict,
-                             nsd_rtr_m2m_d)
+    all_avg_fping_errors = check_fping_kpi(
+                               all_fping_avg_lat_kv,
+                               all_fping_max_lat_kv,
+                               all_fping_min_lat_kv,
+                               all_fping_stddev_kv,
+                               "1:n",
+                               rdma_test)
+
+    all_nsd_errors = check_nsd_kpi(
+                         o2m_thrput_kv,
+                         o2m_avg_thrput,
+                         o2m_max_thrput,
+                         o2m_min_thrput,
+                         o2m_thrput_stddev,
+                         o2m_thrput_diff_pct,
+                         o2m_lat_kv,
+                         o2m_lat_stddev_kv,
+                         o2m_rxe_kv,
+                         o2m_txe_kv,
+                         o2m_retr_kv,
+                         m2m_thrput,
+                         m2m_lat,
+                         m2m_lat_stddev,
+                         m2m_rxe_kv,
+                         m2m_txe_kv,
+                         m2m_retr_kv)
+
+    save_throughput_to_csv(logdir, o2m_thrput_kv, m2m_thrput)
 
     acceptance_flag = check_parameters(
                           fping_count,
@@ -2385,19 +2457,13 @@ def main():
                           buff_size,
                           socket_size)
 
-    save_throughput_to_csv(
-        logdir,
-        throughput_dict
-    )
-    DEVNULL.close()
-    return_code = print_end_summary(
-        all_avg_fping_errors,
-        all_nsd_errors,
-        acceptance_flag)
-    print("")
-    return return_code
+    rc = print_end_summary(
+             all_avg_fping_errors,
+             all_nsd_errors,
+             acceptance_flag)
+    return rc
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
 

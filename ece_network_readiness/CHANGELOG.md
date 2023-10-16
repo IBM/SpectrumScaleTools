@@ -91,3 +91,7 @@ Changelog:
 - 1.21
     - Removed options: --latency, --throughput
     - Added options: --thread-number, --parallel, --buffer-size, --socket-size
+- 1.30
+    - Removed OS version check, using Linux kernel version check instead.
+    - Meraged packages_*.json to packages.json.
+    - Refactored functions and messages.

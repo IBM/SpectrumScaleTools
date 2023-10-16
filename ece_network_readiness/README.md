@@ -1,69 +1,52 @@
 This tool uses fping and nsdperf to run test agianst multiple hosts and presents the results in a way that is easy to interpret. compares the test results with Key Performance Indicators (KPI) and determines if the network was ready to run IBM Storage Scale Erasure Code Edition.
 
-**NOTE:**  Test instance launched by this tool may take a long time, depends on the number of hosts. This tool will display an estimated time consumption at startup. It is recommended to run instance under session of screen or tmux.
+**NOTE:**
+  Test instance launched by this tool may take a long time. The tool will display an estimated time consumption at startup.
+  It is recommended to run instance under session of screen or tmux.
 
-**WARNING:** Running this tool would seriously affect network traffic. This tool comes with no warranty of any kind. Do not use it against any production environment.
+**WARNING:**
+  Do not use this tool against any production environment because running this tool would seriously affect network traffic.
+  This tool comes with no warranty of any kind.
 
-**RHEL 8.x Platform**
-RHEL 8.x does not define default link of /usr/bin/python. Use below command to link default python version to it:
+**Prerequisite:**
+  Passwordless ssh. All hosts participated in the test must ssh each other as root without password.
+  Firewalld must be inactive while this tool is running.
+  Socket port 6668 must be idle if test network with TCP/IP protocol.
 
-*alternatives --config python*
+**Dependent Software:**
+  Dependent package is described in packages.json file.
+  If you do install the packages, run the tool with option: ***--no-package-check***.
+  The tool would quit if dependent package was not installed although you disabled the check.
+  The fping package can be found from [GITHUB](https://github.com/schweikert/fping), [EPEL](https://fedoraproject.org/wiki/EPEL), [RPMFIND](http://rpmfind.net/linux/rpm2html/search.php?query=fping) or somewhere else.
 
-You can choose either python2 or python3 as default python version. Both of them are supported by this tool.
-
-**Dependent Software**
-
-* gcc-c++
-* psmisc
-* fping
-* python3-distro if use Python3
-
-This tool requires the software installed as RPM package. If you do install above software using different method, run this tool with option: ***--rpm-check-disabled***.
-The tool would quit if dependent software was not installed even though you have disabled the check.
-
-gcc-c++ and psmisc can be found from OS image file.
-
-The fping package can be found from [GITHUB](https://github.com/schweikert/fping), [EPEL](https://fedoraproject.org/wiki/EPEL), [RPMFIND](http://rpmfind.net/linux/rpm2html/search.php?query=fping) or somewhere else.
 
 Remarks:
 
   - The launcher host of this tool must be a member of the cluster.
-  - This tool runs on RedHat Enterprise Linux 7.5 or newer, on x86_64 and ppc64le architectures.
-  - SSH root passwordless access must be configured from the launcher to all hosts that participate in the test.
-  - The minimum value of fping count for a valid certification test must be greater than or equal to 500(default).
-  - The minimum value of nsdperf test time for a valid certification test must be greater than or equal to 1200(default) seconds.
-  - The number of hosts must be between 2 and 64. Contact IBM if need to run on more hosts.
-  - This tool would generate a log folder in current directory with raw data for future comparisons.
-  - This tool would return 0 if all tests were passed, else, return an integer which is greater than 0.
-  - If use TCP protocol, port 6668 must be idle on all hosts before launch this tool.
-  - If use TCP protocol, the IP addresses followed --hosts must be in GPFS daemon network according the installation plan.
-  - Firewalld must not be active when this tool is running.
-  - This tool must be run on local filesystem of OS.
-  - If use RDMA protocol, all Mellanox ports must be in Infiniband mode and have the same logical device names.
-  - If use RDMA protocol, the IP addresses followed --hosts should be in cluster admin network according the installation plan.
-  - If use RDMA protocol, network device must be Up as shown by command [*ibdev2netdev*](https://community.mellanox.com/s/article/ibdev2netdev).
-  - On RedHat Enterprise Linux 8 platforms, one can select default python version with command: *alternatives --config python*.
-  - If set a bond device based on RDMA devices, be sure that ''ibdev2netdev'' showed ib name instead of bond name.
+  - The number of hosts must be between 2 and 64. Contact IBM if need to run against more hosts.
+  - If test with TCP/IP protocol, the IP addresses followed '--hosts' option or in hosts.json should be from GPFS daemon network.
+  - If test with RDMA protocol, the IP addresses followed '--hosts' option or in hosts.json can be from cluster admin network.
+  - If test with RDMA protocol, Mellanox ports must be in Infiniband mode and have the same CA(Channel Adapter) name.
+  - If RDMA devices have been set as bond mode, make sure that [*ibdev2netdev*](https://community.mellanox.com/s/article/ibdev2netdev) shows IB device name rather than bond name.
 
 Usage:
 ```
-# python3 koet.py -h
-usage: koet.py [-h] [--hosts HOSTS_CSV] [-s] [-c COUNT] [-t TIME] [-r THREAD]
+usage: koet.py [-h] [--hosts CSV_IPV4] [-s] [-c COUNT] [-t TIME] [-r THREAD]
                [-p PARALLEL] [-b BUFFSIZE] [-o SOCKSIZE] [--rdma PORTS_CSV]
-               [--roce PORTS_CSV] [--rpm-check-disabled] [-v]
+               [--no-package-check] [-v]
 
 optional arguments:
   -h, --help            show this help message and exit
-  --hosts HOSTS_CSV     IPv4 addresses in CSV format. E.g., IP0,IP1,IP2,IP3
-  -s, --save-hosts      [Over]write hosts.json with IP addresses that passed
-                        the check and followed option: --hosts
+  --hosts CSV_IPV4      IPv4 addresses in CSV format. E.g., IP0,IP1,...
+  -s, --save-hosts      [Over]write hosts.json with IP addresses followed
+                        --hosts
   -c COUNT, --fping-count COUNT
-                        count of request packets to send to each target. The
+                        count of fping packets to send to each target. The
                         minimum value can be set to 2 packets for quick test.
                         For certification, it is at least 500 packets
-  -t TIME, --ttime-per-instance TIME
-                        test time per nsdperf instance with unit sec. The
-                        minimum value can be set to 10 sec for quick test. For
+  -t TIME, --test-time TIME
+                        test time per nsdperf instance in sec. The minimum
+                        value can be set to 10 sec for quick test. For
                         certification, it is at least 1200 sec
   -r THREAD, --thread-number THREAD
                         test thread number per nsdperf instance on client. The
@@ -74,456 +57,430 @@ optional arguments:
                         The minimum value is 1 and the maximum value is 8191.
                         Default value is 2
   -b BUFFSIZE, --buffer-size BUFFSIZE
-                        buffer size for each I/O of nsdperf with unit bytes.
-                        The minimum value is 4096 bytes and the maximum value
-                        is 16777216 bytes. For certification, it is 2097152
-                        bytes
+                        buffer size for each I/O of nsdperf in byte The
+                        minimum value is 4096 bytes and the maximum value is
+                        16777216 bytes. For certification, it is 2097152 bytes
   -o SOCKSIZE, --socket-size SOCKSIZE
-                        maximum TCP socket send and receive buffer size with
-                        unit bytes. 0 means the system default setting and the
-                        maximum value is 104857600 bytes. This tool would set
-                        the socket size to the I/O buffer size if socket size
-                        was not specified explicitly
-  --rdma PORTS_CSV      Enable RDMA check and assign ports in CSV format.
-                        E.g., ib0,ib1. Use logical device name rather than mlx
-                        name
-  --roce PORTS_CSV      Enable RoCE check and assign ports in CSV format.
-                        E.g., eth0,eth1. Use logical device name
-  --rpm-check-disabled  Disable dependent rpm package check. Use this option
-                        only if you are sure that all dependent packages have
-                        been installed
+                        maximum socket send and receive buffer size in byte. 0
+                        means the system default setting. The maximum value is
+                        104857600 bytes. This tool implicitly sets the socket
+                        size to the I/O buffer size if socket size was not
+                        specified
+  --rdma PORTS_CSV      assign ports in CSV format. E.g., ib0,ib1,... Use
+                        logical device name rather than mlx name
+  --no-package-check    disable dependent package check
   -v, --version         show program's version number and exit
 ```
 
-Typically launch this tool with TCP protocol. Use GPFS daemon IP addresses then save them to hosts.json for future runs.
+Launch the test with TCP/IP protocol. Use GPFS daemon IP addresses then save them to hosts.json for future runs.
 ```
-# python3 koet.py --hosts 10.10.12.92,10.10.12.93,10.10.12.94,10.10.12.95 --save-hosts
+# python3 koet.py --hosts 10.168.2.101,10.168.2.105,10.168.2.109,10.168.2.113 -s
 ```
 
-To launch this tool with hosts.json that already populated by above example:
+Launch the test with hosts.json that already populated, with TCP/IP protocol.
 ```
 # python3 koet.py
 ```
 
-To run RDMA test with ib0 and ib1 on all hosts, in condition that hosts.json has already been populated with admin IP addresses.
+Launch the test with hosts.json that already populated, with RDMA protocol.
 ```
 # python3 koet.py --rdma ib0,ib1
 ```
 
-KNOWN ISSUES:
-  - RoCE protocol test does not supported at present.
-  - If encounter problem please contact IBM.
-
-
-An example with default option using populated hosts.json:
+A successful example with TCP/IP protocol.
 ```
 # python3 koet.py
 
-Welcome to Network Readiness 1.21
+Welcome to Network Readiness 1.30
 
-The purpose of the tool is to obtain network metrics of a number of nodes then compare them with certain KPIs
-Please access to https://github.com/IBM/SpectrumScaleTools to get required versions and report issues if necessary
+The purpose of this tool is to obtain network metrics of a list of hosts then compare them with certain KPIs
+Please access to https://github.com/IBM/SpectrumScaleTools to get required version and report issue if necessary
 
-Prerequisite:
-  Remote root passwordless ssh between all all nodes must be configured
-
+IMPORTANT WARNING:
+  Do NOT run this tool in production environment because it would generate heavy network traffic.
 NOTE:
-  This tool comes with absolutely no warranty of any kind. Use it at your own risk.
-  The latency and throughput numbers shown by this tool are under special parameters. That is not a generic storage standard.
-  The numbers do not reflect any specification of IBM Storage Scale or any user workload's performance number that run on it.
+  The latency and throughput numbers shown are under special parameters. That is not a generic storage standard.
+  The numbers do not reflect any specification of IBM Storage Scale or any user workload running on it.
 
-JSON files versions:
-    supported OS:     1.11
-    packages:         1.1
-    packages RDMA:    1.0
-    packages RoCE:    1.0
+[ INFO  ] The fping count per instance needs at least 500 request packets. Current setting is 500 packets
+[ INFO  ] The nsdperf needs at least 1200 sec test time per instance. Current setting is 1200 sec
+[ INFO  ] The nsdperf needs 32 test thread per instance. Current setting is 32
+[ INFO  ] The nsdperf needs 2097152 bytes buffer size. Current setting is 2097152 bytes
 
-To certify the environment:
-The average latency KPI is 1.0 msec
-The maximum latency KPI is 2.0 mesc
-The standard deviation latency KPI is 0.33 mesc
-The throughput KPI is 2000 MB/sec
+[ INFO  ] The total time consumption of running this network readiness instance is estimated to take at least 135 minutes
 
-INFO: The fping count per instance needs at least 500 request packets. Current setting is 500 packets
-INFO: The nsdperf needs at least 1200 sec test time per instance. Current setting is 1200 sec
-INFO: The nsdperf needs 32 test thread per instance. Current setting is 32
-INFO: The nsdperf needs 2097152 bytes buffer size. Current setting is 2097152 bytes
+Type 'y' to continue, 'n' to stop
+Continue? <y/n>: y
 
-INFO: The total time consumption according to above paramters is ~135 minutes
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.101
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.101 with strict host key checking
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.105
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.105 with strict host key checking
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.109
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.109 with strict host key checking
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.113
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.113 with strict host key checking
 
-Do you want to continue? (y/n):
+[ INFO  ] Check if required package is available according to packages.json with version 2.0
+[ INFO  ] 10.168.2.101 has fping installed
+[ INFO  ] 10.168.2.101 has psmisc installed
+[ INFO  ] 10.168.2.101 has iproute installed
+[ INFO  ] 10.168.2.101 has gcc-c++ installed
+
+[ INFO  ] 10.168.2.105 has fping installed
+[ INFO  ] 10.168.2.105 has psmisc installed
+[ INFO  ] 10.168.2.105 has iproute installed
+[ INFO  ] 10.168.2.105 has gcc-c++ installed
+
+[ INFO  ] 10.168.2.109 has fping installed
+[ INFO  ] 10.168.2.109 has psmisc installed
+[ INFO  ] 10.168.2.109 has iproute installed
+[ INFO  ] 10.168.2.109 has gcc-c++ installed
+
+[ INFO  ] 10.168.2.113 has fping installed
+[ INFO  ] 10.168.2.113 has psmisc installed
+[ INFO  ] 10.168.2.113 has iproute installed
+[ INFO  ] 10.168.2.113 has gcc-c++ installed
+
+[ INFO  ] 10.168.2.101 has inactive firewalld service
+[ INFO  ] 10.168.2.105 has inactive firewalld service
+[ INFO  ] 10.168.2.109 has inactive firewalld service
+[ INFO  ] 10.168.2.113 has inactive firewalld service
+
+[ INFO  ] Port 6668 on host 10.168.2.101 is free
+[ INFO  ] Port 6668 on host 10.168.2.105 is free
+[ INFO  ] Port 6668 on host 10.168.2.109 is free
+[ INFO  ] Port 6668 on host 10.168.2.113 is free
+
+[ INFO  ] Starts 1 to n fping instances
+[ INFO  ] 10.168.2.101 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.101 completed fping test
+[ INFO  ] 10.168.2.105 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.105 completed fping test
+[ INFO  ] 10.168.2.109 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.109 completed fping test
+[ INFO  ] 10.168.2.113 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.113 completed fping test
+
+[ INFO  ] Starts one to many nsdperf instances
+[ INFO  ] 10.168.2.101 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.101 to other hosts completed
+[ INFO  ] 10.168.2.105 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.105 to other hosts completed
+[ INFO  ] 10.168.2.109 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.109 to other hosts completed
+[ INFO  ] 10.168.2.113 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.113 to other hosts completed
+
+[ INFO  ] Starts many to many nsdperf instance
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] Many to many nsdperf instance completed
+
+[ INFO  ] ICMP latency results of fping 1:n test
+[ INFO  ] 10.168.2.101 has 0.17 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.105 has 0.15 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.109 has 0.16 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.113 has 0.15 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+
+[ INFO  ] 10.168.2.101 has 0.29 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+[ INFO  ] 10.168.2.105 has 0.23 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+[ INFO  ] 10.168.2.109 has 0.23 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+[ INFO  ] 10.168.2.113 has 0.25 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+
+[ INFO  ] 10.168.2.101 has 0.02 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.105 has 0.04 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.109 has 0.04 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.113 has 0.02 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+
+[ INFO  ] 10.168.2.101 has 0.01 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+[ INFO  ] 10.168.2.105 has 0.01 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+[ INFO  ] 10.168.2.109 has 0.01 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+[ INFO  ] 10.168.2.113 has 0.02 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+
+[ INFO  ] Throughput results of nsdperf 1:m test
+[ INFO  ] 10.168.2.101 has 9270 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] 10.168.2.105 has 9230 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] 10.168.2.109 has 9330 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] 10.168.2.113 has 9000 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] The average network throughput is 9207.5 MB/sec
+[ INFO  ] The maximum network throughput is 9330.0 MB/sec
+[ INFO  ] The minimum network throughput is 9000.0 MB/sec
+[ INFO  ] The standard deviation of network throughput is 144.31 MB/sec
+[ INFO  ] Define difference percentage as 100 * (max - min) / max
+[ INFO  ] All hosts have 3.54% network throughput difference which meets the required 20.0% difference KPI
+
+[ INFO  ] Latency results of nsdperf 1:m test
+[ INFO  ] 10.168.2.101 has 1.48777 msec average NSD latency
+[ INFO  ] 10.168.2.105 has 1.49229 msec average NSD latency
+[ INFO  ] 10.168.2.109 has 1.48 msec average NSD latency
+[ INFO  ] 10.168.2.113 has 1.53072 msec average NSD latency
+[ INFO  ] 10.168.2.101 has 0.520861 msec standard deviation of NSD latency
+[ INFO  ] 10.168.2.105 has 0.523878 msec standard deviation of NSD latency
+[ INFO  ] 10.168.2.109 has 0.511029 msec standard deviation of NSD latency
+[ INFO  ] 10.168.2.113 has 0.5476 msec standard deviation of NSD latency
+
+[ INFO  ] Packet results of nsdperf 1:m test
+[ INFO  ] 10.168.2.101 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.105 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.109 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.113 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.101 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.105 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.109 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.113 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.101 has retransmit 0 NSD packet
+[ INFO  ] 10.168.2.105 has retransmit 0 NSD packet
+[ INFO  ] 10.168.2.109 has retransmit 1 NSD packet
+[ INFO  ] 10.168.2.113 has retransmit 0 NSD packet
+
+[ INFO  ] Throughput results of nsdperf m:m test
+[ INFO  ] Many to many network throughput is 13500.0 MB/sec
+
+[ INFO  ] Latency results of nsdperf m:m test
+[ INFO  ] Many to many average NSD latency is 1.40864 msec
+[ INFO  ] Many to many standard deviation of NSD latency is 0.487289 msec
+
+[ INFO  ] Packet results of nsdperf m:m test
+[ INFO  ] Many to many NSD Rx total error is 0 packet
+[ INFO  ] Many to many NSD Rx total error is 0 packet
+[ INFO  ] Many to many NSD total retransmit is 2 packet
+
+[ INFO  ] Summary of NSD throughput can be found in /u/czbj/bugfix_ece_network_readiness/log/2023-10-11_21-36-40/nsd_throughput.csv
+
+[ INFO  ] Summary of this instance
+[ INFO  ] All fping tests are passed
+[ INFO  ] All nsdperf tests are passed
+
+[ INFO  ] All network tests have passed. You can proceed to the next step
 ```
 
-Warning messages would be printed if gave unreasonable options:
+A successful example with RDMA protocol.
 ```
-# python3 koet.py -c 100 -t 120 -r 16 -b 4096
+# python3 koet.py --rdma ib0,ib1
 
-Welcome to Network Readiness 1.21
+Welcome to Network Readiness 1.30
 
-The purpose of the tool is to obtain network metrics of a number of nodes then compare them with certain KPIs
-Please access to https://github.com/IBM/SpectrumScaleTools to get required versions and report issues if necessary
+The purpose of this tool is to obtain network metrics of a list of hosts then compare them with certain KPIs
+Please access to https://github.com/IBM/SpectrumScaleTools to get required version and report issue if necessary
 
-Prerequisite:
-  Remote root passwordless ssh between all all nodes must be configured
-
+IMPORTANT WARNING:
+  Do NOT run this tool in production environment because it would generate heavy network traffic.
 NOTE:
-  This tool comes with absolutely no warranty of any kind. Use it at your own risk.
-  The latency and throughput numbers shown by this tool are under special parameters. That is not a generic storage standard.
-  The numbers do not reflect any specification of IBM Storage Scale or any user workload's performance number that run on it.
+  The latency and throughput numbers shown are under special parameters. That is not a generic storage standard.
+  The numbers do not reflect any specification of IBM Storage Scale or any user workload running on it.
 
-JSON files versions:
-    supported OS:     1.11
-    packages:         1.1
-    packages RDMA:    1.0
-    packages RoCE:    1.0
+[ INFO  ] The fping count per instance needs at least 500 request packets. Current setting is 500 packets
+[ INFO  ] The nsdperf needs at least 1200 sec test time per instance. Current setting is 1200 sec
+[ INFO  ] The nsdperf needs 32 test thread per instance. Current setting is 32
+[ INFO  ] The nsdperf needs 2097152 bytes buffer size. Current setting is 2097152 bytes
 
-To certify the environment:
-The average latency KPI is 1.0 msec
-The maximum latency KPI is 2.0 mesc
-The standard deviation latency KPI is 0.33 mesc
-The throughput KPI is 2000 MB/sec
+[ INFO  ] The total time consumption of running this network readiness instance is estimated to take at least 135 minutes
 
-WARNING: The fping count per instance needs at least 500 request packets. Current setting is 100 packets
-WARNING: The nsdperf needs at least 1200 sec test time per instance. Current setting is 120 sec
-WARNING: The nsdperf needs 32 test thread per instance. Current setting is 16
-WARNING: The nsdperf needs 2097152 bytes buffer size. Current setting is 4096 bytes
+Type 'y' to continue, 'n' to stop
+Continue? <y/n>: y
 
-INFO: The total time consumption according to above paramters is ~19 minutes
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.101
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.101 with strict host key checking
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.105
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.105 with strict host key checking
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.109
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.109 with strict host key checking
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.113
+[ INFO  ] localhost succeeded to passwordless ssh 10.168.2.113 with strict host key checking
 
-Do you want to continue? (y/n):
-```
+[ INFO  ] Check if required package is available according to packages.json with version 2.0
+[ INFO  ] 10.168.2.101 has fping installed
+[ INFO  ] 10.168.2.101 has psmisc installed
+[ INFO  ] 10.168.2.101 has iproute installed
+[ INFO  ] 10.168.2.101 has gcc-c++ installed
+[ INFO  ] 10.168.2.101 has librdmacm installed
+[ INFO  ] 10.168.2.101 has librdmacm-utils installed
+[ INFO  ] 10.168.2.101 has rdma-core-devel installed
+[ INFO  ] 10.168.2.101 has ibutils2 installed
 
-Output from a successful example with TCP/IP.
-```
-OK: SSH with node 10.168.2.101 works
-OK: SSH with node 10.168.2.101 works with strict host key checks
-OK: SSH with node 10.168.2.105 works
-OK: SSH with node 10.168.2.105 works with strict host key checks
-OK: SSH with node 10.168.2.109 works
-OK: SSH with node 10.168.2.109 works with strict host key checks
-OK: SSH with node 10.168.2.113 works
-OK: SSH with node 10.168.2.113 works with strict host key checks
+[ INFO  ] 10.168.2.105 has fping installed
+[ INFO  ] 10.168.2.105 has psmisc installed
+[ INFO  ] 10.168.2.105 has iproute installed
+[ INFO  ] 10.168.2.105 has gcc-c++ installed
+[ INFO  ] 10.168.2.105 has librdmacm installed
+[ INFO  ] 10.168.2.105 has librdmacm-utils installed
+[ INFO  ] 10.168.2.105 has rdma-core-devel installed
+[ INFO  ] 10.168.2.105 has ibutils2 installed
 
-Pre-flight generic checks:
-OK: on host 10.168.2.101 the fping installation status is as expected
-OK: on host 10.168.2.101 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.101 the psmisc installation status is as expected
-OK: on host 10.168.2.101 the iproute installation status is as expected
-OK: on host 10.168.2.105 the fping installation status is as expected
-OK: on host 10.168.2.105 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.105 the psmisc installation status is as expected
-OK: on host 10.168.2.105 the iproute installation status is as expected
-OK: on host 10.168.2.109 the fping installation status is as expected
-OK: on host 10.168.2.109 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.109 the psmisc installation status is as expected
-OK: on host 10.168.2.109 the iproute installation status is as expected
-OK: on host 10.168.2.113 the fping installation status is as expected
-OK: on host 10.168.2.113 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.113 the psmisc installation status is as expected
-OK: on host 10.168.2.113 the iproute installation status is as expected
-OK: on host 10.168.2.101 the firewalld service is not running
-OK: on host 10.168.2.105 the firewalld service is not running
-OK: on host 10.168.2.109 the firewalld service is not running
-OK: on host 10.168.2.113 the firewalld service is not running
-OK: on host 10.168.2.101 TCP port 6668 seems to be free
-OK: on host 10.168.2.105 TCP port 6668 seems to be free
-OK: on host 10.168.2.109 TCP port 6668 seems to be free
-OK: on host 10.168.2.113 TCP port 6668 seems to be free
+[ INFO  ] 10.168.2.109 has fping installed
+[ INFO  ] 10.168.2.109 has psmisc installed
+[ INFO  ] 10.168.2.109 has iproute installed
+[ INFO  ] 10.168.2.109 has gcc-c++ installed
+[ INFO  ] 10.168.2.109 has librdmacm installed
+[ INFO  ] 10.168.2.109 has librdmacm-utils installed
+[ INFO  ] 10.168.2.109 has rdma-core-devel installed
+[ INFO  ] 10.168.2.109 has ibutils2 installed
 
-Creating log dir on hosts:
-OK: on host 10.168.2.101 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-29_22-07-09 has been created
-OK: on host 10.168.2.105 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-29_22-07-09 has been created
-OK: on host 10.168.2.109 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-29_22-07-09 has been created
-OK: on host 10.168.2.113 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-29_22-07-09 has been created
+[ INFO  ] 10.168.2.113 has fping installed
+[ INFO  ] 10.168.2.113 has psmisc installed
+[ INFO  ] 10.168.2.113 has iproute installed
+[ INFO  ] 10.168.2.113 has gcc-c++ installed
+[ INFO  ] 10.168.2.113 has librdmacm installed
+[ INFO  ] 10.168.2.113 has librdmacm-utils installed
+[ INFO  ] 10.168.2.113 has rdma-core-devel installed
+[ INFO  ] 10.168.2.113 has ibutils2 installed
 
-Starting ping run from 10.168.2.101 to all nodes
-Ping run from 10.168.2.101 to all nodes completed
+[ INFO  ] 10.168.2.101 has inactive firewalld service
+[ INFO  ] 10.168.2.105 has inactive firewalld service
+[ INFO  ] 10.168.2.109 has inactive firewalld service
+[ INFO  ] 10.168.2.113 has inactive firewalld service
 
-Starting ping run from 10.168.2.105 to all nodes
-Ping run from 10.168.2.105 to all nodes completed
+[ INFO  ] Port 6668 on host 10.168.2.101 is free
+[ INFO  ] Port 6668 on host 10.168.2.105 is free
+[ INFO  ] Port 6668 on host 10.168.2.109 is free
+[ INFO  ] Port 6668 on host 10.168.2.113 is free
 
-Starting ping run from 10.168.2.109 to all nodes
-Ping run from 10.168.2.109 to all nodes completed
+[ INFO  ] 10.168.2.101 has 'ib0' with 'Up' state
+[ INFO  ] 10.168.2.101 has 'ib1' with 'Up' state
+[ INFO  ] 10.168.2.101 has 'ib0' with CA(Channel Adapter) name 'mlx5_0/1'
+[ INFO  ] 10.168.2.101 has 'ib1' with CA(Channel Adapter) name 'mlx5_1/1'
 
-Starting ping run from 10.168.2.113 to all nodes
-Ping run from 10.168.2.113 to all nodes completed
+[ INFO  ] 10.168.2.105 has 'ib0' with 'Up' state
+[ INFO  ] 10.168.2.105 has 'ib1' with 'Up' state
+[ INFO  ] 10.168.2.105 has 'ib0' with CA(Channel Adapter) name 'mlx5_0/1'
+[ INFO  ] 10.168.2.105 has 'ib1' with CA(Channel Adapter) name 'mlx5_1/1'
 
-Starting throughput tests. Please be patient.
+[ INFO  ] 10.168.2.109 has 'ib0' with 'Up' state
+[ INFO  ] 10.168.2.109 has 'ib1' with 'Up' state
+[ INFO  ] 10.168.2.109 has 'ib0' with CA(Channel Adapter) name 'mlx5_0/1'
+[ INFO  ] 10.168.2.109 has 'ib1' with CA(Channel Adapter) name 'mlx5_1/1'
 
-Start throughput run from 10.168.2.101 to all nodes
-Completed throughput run from 10.168.2.101 to all nodes
+[ INFO  ] 10.168.2.113 has 'ib0' with 'Up' state
+[ INFO  ] 10.168.2.113 has 'ib1' with 'Up' state
+[ INFO  ] 10.168.2.113 has 'ib0' with CA(Channel Adapter) name 'mlx5_0/1'
+[ INFO  ] 10.168.2.113 has 'ib1' with CA(Channel Adapter) name 'mlx5_1/1'
 
-Start throughput run from 10.168.2.105 to all nodes
-Completed throughput run from 10.168.2.105 to all nodes
+[ INFO  ] 10.168.2.101 has 'mlx5_0' with InfiniBand Link Layer
+[ INFO  ] 10.168.2.101 has 'mlx5_1' with InfiniBand Link Layer
 
-Start throughput run from 10.168.2.109 to all nodes
-Completed throughput run from 10.168.2.109 to all nodes
+[ INFO  ] 10.168.2.105 has 'mlx5_0' with InfiniBand Link Layer
+[ INFO  ] 10.168.2.105 has 'mlx5_1' with InfiniBand Link Layer
 
-Start throughput run from 10.168.2.113 to all nodes
-Completed throughput run from 10.168.2.113 to all nodes
+[ INFO  ] 10.168.2.109 has 'mlx5_0' with InfiniBand Link Layer
+[ INFO  ] 10.168.2.109 has 'mlx5_1' with InfiniBand Link Layer
 
-Starting many to many nodes throughput test
-Completed many to many nodes throughput test
+[ INFO  ] 10.168.2.113 has 'mlx5_0' with InfiniBand Link Layer
+[ INFO  ] 10.168.2.113 has 'mlx5_1' with InfiniBand Link Layer
 
-Results for ICMP latency test 1:n
-OK: on host 10.168.2.101 the 1:n average ICMP latency is 0.13 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.101 the 1:n maximum ICMP latency is 0.25 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.101 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.101 the 1:n standard deviation of ICMP latency is 0.01 msec. Which is lower than the KPI of 0.33 msec
+[ INFO  ] Starts 1 to n fping instances
+[ INFO  ] 10.168.2.101 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.101 completed fping test
+[ INFO  ] 10.168.2.105 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.105 completed fping test
+[ INFO  ] 10.168.2.109 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.109 completed fping test
+[ INFO  ] 10.168.2.113 starts fping instance to all hosts
+[ INFO  ] It will take at least 500 sec
+[ INFO  ] 10.168.2.113 completed fping test
 
-OK: on host 10.168.2.105 the 1:n average ICMP latency is 0.15 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.105 the 1:n maximum ICMP latency is 0.26 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.105 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.105 the 1:n standard deviation of ICMP latency is 0.02 msec. Which is lower than the KPI of 0.33 msec
+[ INFO  ] Starts one to many nsdperf instances
+[ INFO  ] 10.168.2.101 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.101 to other hosts completed
+[ INFO  ] 10.168.2.105 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.105 to other hosts completed
+[ INFO  ] 10.168.2.109 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.109 to other hosts completed
+[ INFO  ] 10.168.2.113 starts nsdperf instance to all nodes
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] nsdperf instance from 10.168.2.113 to other hosts completed
 
-OK: on host 10.168.2.109 the 1:n average ICMP latency is 0.15 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.109 the 1:n maximum ICMP latency is 0.24 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.109 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.109 the 1:n standard deviation of ICMP latency is 0.02 msec. Which is lower than the KPI of 0.33 msec
+[ INFO  ] Starts many to many nsdperf instance
+[ INFO  ] It will take at least 1200 sec
+[ INFO  ] Many to many nsdperf instance completed
 
-OK: on host 10.168.2.113 the 1:n average ICMP latency is 0.14 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.113 the 1:n maximum ICMP latency is 0.24 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.113 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.113 the 1:n standard deviation of ICMP latency is 0.02 msec. Which is lower than the KPI of 0.33 msec
+[ INFO  ] ICMP latency results of fping 1:n test
+[ INFO  ] 10.168.2.101 has 0.14 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.105 has 0.14 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.109 has 0.15 msec ICMP average latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.113 has 0.16 msec ICMP average latency which meets the required average latency KPI 1.0 msec
 
-Results for throughput test
-OK: on host 10.168.2.101 the throughput test result is 8670 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host 10.168.2.105 the throughput test result is 8430 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host 10.168.2.109 the throughput test result is 9220 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host 10.168.2.113 the throughput test result is 9050 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host all at the same time the throughput test result is 13500 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: the difference of throughput between maximum and minimum values is 8.57%, which is less than 20% defined on the KPI
+[ INFO  ] 10.168.2.101 has 0.25 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+[ INFO  ] 10.168.2.105 has 0.23 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+[ INFO  ] 10.168.2.109 has 0.24 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
+[ INFO  ] 10.168.2.113 has 0.25 msec ICMP maximum latency which meets the required maximum latency KPI 2.0 msec
 
-The following metrics are not part of the KPI and are shown for informational purposes only
-INFO: The maximum throughput value is 9220.0
-INFO: The minimum throughput value is 8430.0
-INFO: The mean throughput value is 8842.5
-INFO: The standard deviation throughput value is 358.46
-INFO: The average NSD latency for 10.168.2.101 is 1.6305 msec
-INFO: The average NSD latency for 10.168.2.105 is 1.56452 msec
-INFO: The average NSD latency for 10.168.2.109 is 1.50673 msec
-INFO: The average NSD latency for 10.168.2.113 is 1.52741 msec
-INFO: The average NSD latency for all at the same time is 1.44246 msec
-INFO: The standard deviation of NSD latency for 10.168.2.101 is 0.560723 msec
-INFO: The standard deviation of NSD latency for 10.168.2.105 is 0.574662 msec
-INFO: The standard deviation of NSD latency for 10.168.2.109 is 0.5333 msec
-INFO: The standard deviation of NSD latency for 10.168.2.113 is 0.54301 msec
-INFO: The standard deviation of NSD latency for all at the same time is 0.503492 msec
-INFO: The packet Rx error count for throughput test on 10.168.2.101 is equal to 0 packet[s]
-INFO: The packet Rx error count for throughput test on 10.168.2.105 is equal to 0 packet[s]
-INFO: The packet Rx error count for throughput test on 10.168.2.109 is equal to 0 packet[s]
-INFO: The packet Rx error count for throughput test on 10.168.2.113 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.101 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.105 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.109 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.113 is equal to 0 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.101 is equal to 91 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.105 is equal to 3 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.109 is equal to 7 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.113 is equal to 6 packet[s]
-INFO: The packet Rx error count for throughput test on many to many is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on many to many is equal to 0 packet[s]
-INFO: The packet retransmit count for throughput test many to many is equal to 24 packet[s]
-INFO: CSV file with throughput information can be found at /u/czbj/developing_ece_network_readiness/log/2023-08-29_22-07-09/throughput.csv
+[ INFO  ] 10.168.2.101 has 0.02 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.105 has 0.02 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.109 has 0.03 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
+[ INFO  ] 10.168.2.113 has 0.04 msec ICMP minimum latency which meets the required average latency KPI 1.0 msec
 
-The summary of this run:
+[ INFO  ] 10.168.2.101 has 0.02 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+[ INFO  ] 10.168.2.105 has 0.03 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+[ INFO  ] 10.168.2.109 has 0.01 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
+[ INFO  ] 10.168.2.113 has 0.02 msec ICMP latency standard deviation which meets the required latency standard deviation KPI 0.33 msec
 
-        The 1:n ICMP average latency was successful in all nodes
-        The 1:n throughput test was successful in all nodes
+[ INFO  ] Throughput results of nsdperf 1:m test
+[ INFO  ] 10.168.2.101 has 24000 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] 10.168.2.105 has 24000 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] 10.168.2.109 has 24600 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] 10.168.2.113 has 24600 MB/sec network throughput which meets the required 2000 MB/sec throughput KPI
+[ INFO  ] The average network throughput is 24300.0 MB/sec
+[ INFO  ] The maximum network throughput is 24600.0 MB/sec
+[ INFO  ] The minimum network throughput is 24000.0 MB/sec
+[ INFO  ] The standard deviation of network throughput is 346.41 MB/sec
+[ INFO  ] Define difference percentage as 100 * (max - min) / max
+[ INFO  ] All hosts have 2.44% network throughput difference which meets the required 20.0% difference KPI
 
-OK: All tests have passed
-OK: You can proceed to the next step
-```
+[ INFO  ] Latency results of nsdperf 1:m test
+[ INFO  ] 10.168.2.101 has 2.70495 msec average NSD latency
+[ INFO  ] 10.168.2.105 has 2.7182 msec average NSD latency
+[ INFO  ] 10.168.2.109 has 2.62801 msec average NSD latency
+[ INFO  ] 10.168.2.113 has 2.61933 msec average NSD latency
+[ INFO  ] 10.168.2.101 has 0.543721 msec standard deviation of NSD latency
+[ INFO  ] 10.168.2.105 has 0.549416 msec standard deviation of NSD latency
+[ INFO  ] 10.168.2.109 has 0.528477 msec standard deviation of NSD latency
+[ INFO  ] 10.168.2.113 has 0.526968 msec standard deviation of NSD latency
 
-Output from a successful example with RDMA.
-```
-OK: SSH with node 10.168.2.101 works
-OK: SSH with node 10.168.2.101 works with strict host key checks
-OK: SSH with node 10.168.2.105 works
-OK: SSH with node 10.168.2.105 works with strict host key checks
-OK: SSH with node 10.168.2.109 works
-OK: SSH with node 10.168.2.109 works with strict host key checks
-OK: SSH with node 10.168.2.113 works
-OK: SSH with node 10.168.2.113 works with strict host key checks
+[ INFO  ] Packet results of nsdperf 1:m test
+[ INFO  ] 10.168.2.101 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.105 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.109 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.113 has 0 packet NSD Rx error
+[ INFO  ] 10.168.2.101 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.105 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.109 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.113 has 0 packet NSD Tx error
+[ INFO  ] 10.168.2.101 has retransmit 0 NSD packet
+[ INFO  ] 10.168.2.105 has retransmit 0 NSD packet
+[ INFO  ] 10.168.2.109 has retransmit 1 NSD packet
+[ INFO  ] 10.168.2.113 has retransmit 0 NSD packet
 
-Pre-flight generic checks:
-OK: on host 10.168.2.101 the fping installation status is as expected
-OK: on host 10.168.2.101 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.101 the psmisc installation status is as expected
-OK: on host 10.168.2.101 the iproute installation status is as expected
-OK: on host 10.168.2.105 the fping installation status is as expected
-OK: on host 10.168.2.105 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.105 the psmisc installation status is as expected
-OK: on host 10.168.2.105 the iproute installation status is as expected
-OK: on host 10.168.2.109 the fping installation status is as expected
-OK: on host 10.168.2.109 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.109 the psmisc installation status is as expected
-OK: on host 10.168.2.109 the iproute installation status is as expected
-OK: on host 10.168.2.113 the fping installation status is as expected
-OK: on host 10.168.2.113 the gcc-c++ installation status is as expected
-OK: on host 10.168.2.113 the psmisc installation status is as expected
-OK: on host 10.168.2.113 the iproute installation status is as expected
-OK: on host 10.168.2.101 the firewalld service is not running
-OK: on host 10.168.2.105 the firewalld service is not running
-OK: on host 10.168.2.109 the firewalld service is not running
-OK: on host 10.168.2.113 the firewalld service is not running
-OK: on host 10.168.2.101 TCP port 6668 seems to be free
-OK: on host 10.168.2.105 TCP port 6668 seems to be free
-OK: on host 10.168.2.109 TCP port 6668 seems to be free
-OK: on host 10.168.2.113 TCP port 6668 seems to be free
+[ INFO  ] Throughput results of nsdperf m:m test
+[ INFO  ] Many to many network throughput is 47900.0 MB/sec
 
-Pre-flight RDMA checks:
-OK: on host 10.168.2.101 the librdmacm installation status is as expected
-OK: on host 10.168.2.101 the librdmacm-utils installation status is as expected
-OK: on host 10.168.2.101 the rdma-core-devel installation status is as expected
-OK: on host 10.168.2.101 the ibutils2 installation status is as expected
-OK: on host 10.168.2.105 the librdmacm installation status is as expected
-OK: on host 10.168.2.105 the librdmacm-utils installation status is as expected
-OK: on host 10.168.2.105 the rdma-core-devel installation status is as expected
-OK: on host 10.168.2.105 the ibutils2 installation status is as expected
-OK: on host 10.168.2.109 the librdmacm installation status is as expected
-OK: on host 10.168.2.109 the librdmacm-utils installation status is as expected
-OK: on host 10.168.2.109 the rdma-core-devel installation status is as expected
-OK: on host 10.168.2.109 the ibutils2 installation status is as expected
-OK: on host 10.168.2.113 the librdmacm installation status is as expected
-OK: on host 10.168.2.113 the librdmacm-utils installation status is as expected
-OK: on host 10.168.2.113 the rdma-core-devel installation status is as expected
-OK: on host 10.168.2.113 the ibutils2 installation status is as expected
-OK: on host 10.168.2.101 the file ibdev2netdev exists
-OK: on host 10.168.2.101 the file ibstat exists
-OK: on host 10.168.2.105 the file ibdev2netdev exists
-OK: on host 10.168.2.105 the file ibstat exists
-OK: on host 10.168.2.109 the file ibdev2netdev exists
-OK: on host 10.168.2.109 the file ibstat exists
-OK: on host 10.168.2.113 the file ibdev2netdev exists
-OK: on host 10.168.2.113 the file ibstat exists
-OK: on host 10.168.2.101 the RDMA port ib0 is on UP state
-OK: on host 10.168.2.101 the RDMA port ib1 is on UP state
-OK: on host 10.168.2.105 the RDMA port ib0 is on UP state
-OK: on host 10.168.2.105 the RDMA port ib1 is on UP state
-OK: on host 10.168.2.109 the RDMA port ib0 is on UP state
-OK: on host 10.168.2.109 the RDMA port ib1 is on UP state
-OK: on host 10.168.2.113 the RDMA port ib0 is on UP state
-OK: on host 10.168.2.113 the RDMA port ib1 is on UP state
-OK: on host 10.168.2.101 the RDMA port ib0 is CA mlx5_0/1
-OK: on host 10.168.2.101 the RDMA port ib1 is CA mlx5_1/1
-OK: on host 10.168.2.105 the RDMA port ib0 is CA mlx5_0/1
-OK: on host 10.168.2.105 the RDMA port ib1 is CA mlx5_1/1
-OK: on host 10.168.2.109 the RDMA port ib0 is CA mlx5_0/1
-OK: on host 10.168.2.109 the RDMA port ib1 is CA mlx5_1/1
-OK: on host 10.168.2.113 the RDMA port ib0 is CA mlx5_0/1
-OK: on host 10.168.2.113 the RDMA port ib1 is CA mlx5_1/1
-OK: on host 10.168.2.101 Mellanox ports  ib0 on Ethernet mode are supported
-OK: on host 10.168.2.101 Mellanox ports  ib1 on Ethernet mode are supported
-OK: on host 10.168.2.105 Mellanox ports  ib0 on Ethernet mode are supported
-OK: on host 10.168.2.105 Mellanox ports  ib1 on Ethernet mode are supported
-OK: on host 10.168.2.109 Mellanox ports  ib0 on Ethernet mode are supported
-OK: on host 10.168.2.109 Mellanox ports  ib1 on Ethernet mode are supported
-OK: on host 10.168.2.113 Mellanox ports  ib0 on Ethernet mode are supported
-OK: on host 10.168.2.113 Mellanox ports  ib1 on Ethernet mode are supported
-OK: all RDMA ports are up on all nodes
+[ INFO  ] Latency results of nsdperf m:m test
+[ INFO  ] Many to many average NSD latency is 2.33601 msec
+[ INFO  ] Many to many standard deviation of NSD latency is 0.563942 msec
 
-Creating log dir on hosts:
-OK: on host 10.168.2.101 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-30_01-39-53 has been created
-OK: on host 10.168.2.105 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-30_01-39-53 has been created
-OK: on host 10.168.2.109 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-30_01-39-53 has been created
-OK: on host 10.168.2.113 logdir /u/czbj/developing_ece_network_readiness/log/2023-08-30_01-39-53 has been created
+[ INFO  ] Packet results of nsdperf m:m test
+[ INFO  ] Many to many NSD Rx total error is 0 packet
+[ INFO  ] Many to many NSD Rx total error is 0 packet
+[ INFO  ] Many to many NSD total retransmit is 0 packet
 
-Starting ping run from 10.168.2.101 to all nodes
-Ping run from 10.168.2.101 to all nodes completed
+[ INFO  ] Summary of NSD throughput can be found in /u/czbj/bugfix_ece_network_readiness/log/2023-10-12_05-26-34/nsd_throughput.csv
 
-Starting ping run from 10.168.2.105 to all nodes
-Ping run from 10.168.2.105 to all nodes completed
+[ INFO  ] Summary of this instance
+[ INFO  ] All fping tests are passed
+[ INFO  ] All nsdperf tests are passed
 
-Starting ping run from 10.168.2.109 to all nodes
-Ping run from 10.168.2.109 to all nodes completed
-
-Starting ping run from 10.168.2.113 to all nodes
-Ping run from 10.168.2.113 to all nodes completed
-
-Starting throughput tests. Please be patient.
-
-Start throughput run from 10.168.2.101 to all nodes
-Completed throughput run from 10.168.2.101 to all nodes
-
-Start throughput run from 10.168.2.105 to all nodes
-Completed throughput run from 10.168.2.105 to all nodes
-
-Start throughput run from 10.168.2.109 to all nodes
-Completed throughput run from 10.168.2.109 to all nodes
-
-Start throughput run from 10.168.2.113 to all nodes
-Completed throughput run from 10.168.2.113 to all nodes
-
-Starting many to many nodes throughput test
-Completed many to many nodes throughput test
-
-Results for ICMP latency test 1:n
-OK: on host 10.168.2.101 the 1:n average ICMP latency is 0.16 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.101 the 1:n maximum ICMP latency is 0.25 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.101 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.101 the 1:n standard deviation of ICMP latency is 0.01 msec. Which is lower than the KPI of 0.33 msec
-
-OK: on host 10.168.2.105 the 1:n average ICMP latency is 0.16 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.105 the 1:n maximum ICMP latency is 0.25 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.105 the 1:n minimum ICMP latency is 0.04 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.105 the 1:n standard deviation of ICMP latency is 0.00 msec. Which is lower than the KPI of 0.33 msec
-
-OK: on host 10.168.2.109 the 1:n average ICMP latency is 0.14 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.109 the 1:n maximum ICMP latency is 0.27 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.109 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.109 the 1:n standard deviation of ICMP latency is 0.02 msec. Which is lower than the KPI of 0.33 msec
-
-OK: on host 10.168.2.113 the 1:n average ICMP latency is 0.14 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.113 the 1:n maximum ICMP latency is 0.26 msec. Which is lower than the KPI of 2.0 msec
-OK: on host 10.168.2.113 the 1:n minimum ICMP latency is 0.02 msec. Which is lower than the KPI of 1.0 msec
-OK: on host 10.168.2.113 the 1:n standard deviation of ICMP latency is 0.02 msec. Which is lower than the KPI of 0.33 msec
-
-Results for throughput test
-OK: on host 10.168.2.101 the throughput test result is 24000 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host 10.168.2.105 the throughput test result is 24000 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host 10.168.2.109 the throughput test result is 24500 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host 10.168.2.113 the throughput test result is 24600 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: on host all at the same time the throughput test result is 47800 MB/sec. Which is higher than the KPI of 2000 MB/sec
-OK: the difference of throughput between maximum and minimum values is 2.44%, which is less than 20% defined on the KPI
-
-The following metrics are not part of the KPI and are shown for informational purposes only
-INFO: The maximum throughput value is 24600.0
-INFO: The minimum throughput value is 24000.0
-INFO: The mean throughput value is 24275.0
-INFO: The standard deviation throughput value is 320.16
-INFO: The average NSD latency for 10.168.2.101 is 2.70798 msec
-INFO: The average NSD latency for 10.168.2.105 is 2.69019 msec
-INFO: The average NSD latency for 10.168.2.109 is 2.63669 msec
-INFO: The average NSD latency for 10.168.2.113 is 2.62044 msec
-INFO: The average NSD latency for all at the same time is 2.32364 msec
-INFO: The standard deviation of NSD latency for 10.168.2.101 is 0.569844 msec
-INFO: The standard deviation of NSD latency for 10.168.2.105 is 0.560671 msec
-INFO: The standard deviation of NSD latency for 10.168.2.109 is 0.559436 msec
-INFO: The standard deviation of NSD latency for 10.168.2.113 is 0.540392 msec
-INFO: The standard deviation of NSD latency for all at the same time is 0.600218 msec
-INFO: The packet Rx error count for throughput test on 10.168.2.101 is equal to 0 packet[s]
-INFO: The packet Rx error count for throughput test on 10.168.2.105 is equal to 0 packet[s]
-INFO: The packet Rx error count for throughput test on 10.168.2.109 is equal to 0 packet[s]
-INFO: The packet Rx error count for throughput test on 10.168.2.113 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.101 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.105 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.109 is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on 10.168.2.113 is equal to 0 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.101 is equal to 180 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.105 is equal to 1 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.109 is equal to 1 packet[s]
-INFO: The packet retransmit count for throughput test on 10.168.2.113 is equal to 1 packet[s]
-INFO: The packet Rx error count for throughput test on many to many is equal to 0 packet[s]
-INFO: The packet Tx error count for throughput test on many to many is equal to 0 packet[s]
-INFO: The packet retransmit count for throughput test many to many is equal to 28 packet[s]
-INFO: CSV file with throughput information can be found at /u/czbj/developing_ece_network_readiness/log/2023-08-30_01-39-53/throughput.csv
-
-The summary of this run:
-
-        The 1:n ICMP average latency was successful in all nodes
-        The 1:n throughput test was successful in all nodes
-
-OK: All tests have passed
-OK: You can proceed to the next step
+[ INFO  ] All network tests have passed. You can proceed to the next step
 ```
