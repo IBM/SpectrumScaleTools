@@ -1,5 +1,5 @@
 {
-  "json_version": "1.8",
+  "json_version": "1.9",
   "SUSE Linux Enterprise Server 12 SP2": "NOK",
   "SUSE Linux Enterprise Server 12 SP3": "NOK",
   "SUSE Linux Enterprise Server 15": "NOK",
@@ -22,6 +22,7 @@
   "Red Hat Enterprise Linux 9.0": "OK",
   "Red Hat Enterprise Linux 9.1": "OK",
   "Red Hat Enterprise Linux 9.2": "OK",
+  "Red Hat Enterprise Linux 9.3": "OK",
   "CentOS Linux 7.5": "WARN",
   "CentOS Linux 7.6": "WARN",
   "CentOS Linux 7.7": "WARN",
