@@ -29,7 +29,7 @@ if PYTHON3 is False:
 start_time_date = datetime.datetime.now()
 
 # This script version, independent from the JSON versions
-MOR_VERSION = "1.80"
+MOR_VERSION = "1.90"
 
 # GIT URLs
 GITREPOURL = "https://github.com/IBM/SpectrumScaleTools"
@@ -112,7 +112,7 @@ HW_REQUIREMENTS_MD5 = "a22d65d640888409219d70352dd7228d"
 NIC_ADAPTERS_MD5 = "dca06f75452f45c65658660fb8e969e6"
 PACKAGES_MD5 = "a15b08b05998d455aad792ef5d3cc811"
 SAS_ADAPTERS_MD5 = "42f27f9179992928ebbc6e3becc79ba6"
-SUPPORTED_OS_MD5 = "9f519023ac0e072bffab4e98d36cb984"
+SUPPORTED_OS_MD5 = "9b7c8cb13784472f43e36df20249119f"
 
 # acceptable speed of SCSI controller
 ACC_CTRLR_SPEED = '12G'
@@ -1380,57 +1380,113 @@ def unique_list(inputlist):
     return outputlist
 
 
-def check_os_redhat(os_dictionary):
-    redhat8 = False
+def check_os_distribution(os_kv):
+    """
+    Params:
+        os_kv: K-V pairs of distribution-supportState.
+    Returns:
+        (error, name_version, above_rht7)
+        exit if hit serious problem.
+    """
+    if not os_kv or isinstance(os_kv, dict) is False:
+        sys.exit("{0}{1} Invalid parameter: os_kv".format(ERROR,
+                 LOCAL_HOSTNAME))
+    above_rht7 = False
     fatal_error = False
-    # Check redhat-release vs dictionary list
     try:
-        redhat_distribution = platform.linux_distribution()
-    except AttributeError:
-        import distro
-        redhat_distribution = distro.linux_distribution()
+        distname, version, _ = platform.linux_distribution()
+    except BaseException as e:
+        logging.debug("Tried to get Linux distribution info by platform " +
+                      "package but hit exception: {}".format(e))
+        try:
+            distname, version, _ = distro.linux_distribution()
+        except BaseException as e:
+            sys.exit("{0}{1} tried to get Linux distribution ".format(ERROR,
+                     LOCAL_HOSTNAME) + "info by distro package but hit " +
+                     "exception: {}\n".format(e))
+    distname = distname.strip()
+    version = version.strip()
+    if not distname or not version:
+        # platform.linux_distribution may get empty tuple
+        try:
+            distname, version, _ = distro.linux_distribution()
+        except BaseException as e:
+            sys.exit("{0}{1} tried to get Linux distribution ".format(ERROR,
+                     LOCAL_HOSTNAME) + "info by distro package but " +
+                     "hit exception: {}\n".format(e))
+    distname = distname.strip()
+    version = version.strip()
+    # RHEL, CentOS, Rocky Linux, SuSE, Ubuntu, Debian has /etc/os-release
+    if not distname:
+        # TODO cat /etc/os-release |grep PRETTY_NAME |awk -F '=' '{print $NF}'
+        sys.exit("{0}{1} got empty Linux distribution name\n".format(ERROR,
+                 LOCAL_HOSTNAME))
+    if not version:
+        # TODO cat /etc/os-release |grep PRETTY_NAME |awk '{print $(NF-1)}'
+        sys.exit("{0}{1} got empty Linux distribution version\n".format(ERROR,
+                 LOCAL_HOSTNAME))
+    if 'CentOS Linux' in distname:
+        matchobj = re.match(OSVERPATT, version)
+        if matchobj:
+            version = "{0}.{1}".format(matchobj.group('major'),
+                                       matchobj.group('minor'))
+    name_version = "{0} {1}".format(distname, version)
+    logging.debug("{0} is running {1}".format(LOCAL_HOSTNAME, name_version))
+    if 'Red Hat Enterprise Linux' in distname or \
+       'CentOS Linux' in distname or \
+       'Rocky Linux' in distname:
+        try:
+            major_ver = int(version.split('.')[0])
+        except BaseException as e:
+            sys.exit("{0}{1} tried to get the major version of ".format(ERROR,
+                     LOCAL_HOSTNAME) + "{} but hit ".format(name_version) +
+                     "exception: {}\n".format(e))
+        if major_ver > 7:
+            above_rht7 = True
 
-    version_string = redhat_distribution[1]
     try:
-        if platform.dist()[0] == "centos":
-            matchobj = re.match(OSVERPATT, version_string)
-            version_string = "{}.{}".format(matchobj.group('major'),
-                                            matchobj.group('minor'))
-    except AttributeError:
-        pass
-
-    redhat_distribution_str = redhat_distribution[0] + \
-        " " + version_string
-
-    if version_string.startswith("8.") or version_string.startswith("9."):
-        redhat8 = True
-
-    error_message = ERROR + LOCAL_HOSTNAME + " " + \
-        redhat_distribution_str + " is not a supported OS to run ECE\n"
-    try:
-        if os_dictionary[redhat_distribution_str] == 'OK':
-            print(
-                INFO +
-                LOCAL_HOSTNAME +
-                " " +
-                redhat_distribution_str +
-                " is a supported OS to run ECE")
-        elif os_dictionary[redhat_distribution_str] == 'WARN':
-            print(
-                WARNING +
-                LOCAL_HOSTNAME +
-                " " +
-                redhat_distribution_str +
-                " is a clone OS that is not officially supported" +
-                " to run ECE." +
-                " See IBM Storage Scale FAQ for restrictions.")
+        distnames = list(os_kv.keys())
+    except BaseException as e:
+        sys.exit("{0}{1} tried to extract Linux distribution ".format(ERROR,
+                 LOCAL_HOSTNAME) + "names but hit exception: {}\n".format(e))
+    if not distnames:
+        sys.exit("{0}{1} got empty Linux distribution names ".format(ERROR,
+                 LOCAL_HOSTNAME) + "from {}".format(os_kv))
+    logging.debug("Got Linux distribution names: {}".format(distnames))
+    if distname in distnames:
+        try:
+            supp_stat = os_kv[distname]
+        except KeyError as e:
+            fatal_error = True
+            print("{0}{1} tried to extract support state of ".format(ERROR,
+                  LOCAL_HOSTNAME) + "{} but hit ".format(name_version) +
+                  "KeyError: {}".format(e))
+            print("{0}{1} is running {2} which is NOT ".format(ERROR,
+                      LOCAL_HOSTNAME, name_version) + "supported to run ECE")
+        if not supp_stat:
+            fatal_error = True
+            print("{0}{1} is running OS '{2}' whose support state ".format(ERROR,
+                  LOCAL_HOSTNAME, name_version) + "is not specified")
+        elif supp_stat == 'OK':
+            print("{0}{1} is running {2}".format(INFO, LOCAL_HOSTNAME,
+                  name_version))
+        elif supp_stat == 'NOK':
+            fatal_error = True
+            print("{0}{1} is running {2} which is NOT ".format(ERROR,
+                  LOCAL_HOSTNAME, name_version) + "OK to run ECE")
+        elif supp_stat == 'WARN':
+            print("{0}{1} is running {2}".format(WARNING, LOCAL_HOSTNAME,
+                  name_version))
         else:
-            sys.exit(error_message)
+            fatal_error = True
+            print("{0}{1} is running {2} with support state: {3} ".format(ERROR,
+                  LOCAL_HOSTNAME, name_version, supp_stat))
+    else:
+        fatal_error = True
+        print("{0}{1} is running OS '{2}' which is ".format(ERROR, LOCAL_HOSTNAME,
+              name_version) + "NOT tested by IBM")
 
-    except BaseException:
-        sys.exit(error_message)
-
-    return fatal_error, redhat_distribution_str, redhat8
+    return fatal_error, name_version, above_rht7
 
 
 def get_json_versions(
@@ -3949,19 +4005,6 @@ def check_NIC(NIC_dictionary,ip_address):
     return fatal_error, NIC_model
 
 
-def check_distribution():
-    # Decide if this is a redhat or a suse
-    if PYTHON3:
-        what_dist = distro.distro_release_info()['id']
-    else:
-        what_dist = platform.dist()[0]
-    if what_dist in ["redhat", "centos"]:
-        return what_dist
-    else:  # everything else we fail
-        print(ERROR + LOCAL_HOSTNAME + " ECE is only supported on RedHat")
-        return "UNSUPPORTED_DISTRIBUTION"
-
-
 def check_py3_yaml():
     # YAML is not needed for this tool but Scale 5.1.0+
     if PYTHON3:
@@ -4016,7 +4059,7 @@ def print_summary_standalone(
         outputfile_name,
         start_time_date,
         end_time_date,
-        redhat_distribution_str,
+        dist_name,
         current_processor,
         num_sockets,
         core_count,
@@ -4033,11 +4076,11 @@ def print_summary_standalone(
         sata_on):
     # This is not being run from the toolkit so lets write a more human summary
     print("")
-    print("\tSummary of this standalone run:")
-    print("\t\tRun started at " + str(start_time_date))
-    print("\t\tECE Readiness version " + MOR_VERSION)
+    print("\tSummary of this standalone instance:")
+    print("\t\tStarted at " + str(start_time_date))
+    print("\t\tOS Readiness version " + MOR_VERSION)
     print("\t\tHostname: " + LOCAL_HOSTNAME)
-    print("\t\tOS: " + redhat_distribution_str)
+    print("\t\tOS: " + dist_name)
     print("\t\tArchitecture: " + str(current_processor))
     if platform.processor() == 's390x':
         print("\t\tCPUs " + str(core_count))
@@ -4060,7 +4103,7 @@ def print_summary_standalone(
         print("\t\tHCAs in use: " + ', '.join(NIC_model))
     print("\t\tNVMe drives: " + str(number_of_NVME_drives))
     print("\t\tLink speed: " + str(device_speed))
-    print("\t\tRun ended at " + str(end_time_date))
+    print("\t\tEnded at " + str(end_time_date))
     print("")
     print("{0}{1} saved detailed information of this instance ".format(INFO,
           LOCAL_HOSTNAME) + "to {}".format(outputfile_name))
@@ -4185,7 +4228,6 @@ def main():
     logging.debug(
         "Calculated MD5 SUMs written into dictionary"
     )
-
 
     # Check MD5 hashes. Files are already checked that exists and load JSON
     logging.debug(
@@ -4380,78 +4422,31 @@ def main():
             nfatal_errors = nfatal_errors + 1
 
     # Check linux_distribution
-    redhat_distribution_str = "NOT CHECKED"
-    logging.debug("Going to check the RedHat Linux distribution")
-    # Need this part out of OS check in case it is disabled by user
-    if PYTHON3:
-        redhat_distribution = distro.linux_distribution()
-    else:
-        redhat_distribution = platform.linux_distribution()
-    logging.debug(
-        "Got RHEL Linux distribution " +
-        str(redhat_distribution)
-    )
-    version_string = redhat_distribution[1]
-    redhat8 = version_string.startswith("8.")
-    # End of RHEL8 out of OS check
+    dist_name = "NOT CHECKED"
+    above_rht7 = False
     if os_check:
-        logging.debug(
-            "Going to check the RHEL distribution is supported"
-        )
-        linux_distribution = check_distribution()
-        logging.debug(
-            "Got back from check and got Linux distribution " +
-            str(linux_distribution)
-        )
-        outputfile_dict['linux_distribution'] = linux_distribution
-        if linux_distribution in ["redhat", "centos"]:
-            logging.debug(
-                "We have a RHEL or CentOS distribution. We check for version"
-            )
-            fatal_error, redhat_distribution_str, redhat8 = check_os_redhat(
-                os_dictionary)
-            logging.debug(
-                "Got back from detailed RHEL check. Got RHEL distribution " +
-                redhat_distribution_str +
-                ". Detected as RHEL8 is " +
-                str(redhat8) +
-                ". And fatal_error=" +
-                str(fatal_error)
-            )
-            if fatal_error:
-                nfatal_errors = nfatal_errors + 1
-            else:
-                outputfile_dict['OS'] = redhat_distribution_str
+        fatal_error, dist_name, above_rht7 = check_os_distribution(
+                                                 os_dictionary)
+        logging.debug("Got OS distribution: '{}'. It ".format(dist_name) +
+                      "is above RedHat OS 7 family: {}. ".format(above_rht7) +
+                      "fatal_error: {}".format(fatal_error))
+        if fatal_error:
+            nfatal_errors += 1
         else:
-            logging.debug(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " cannot determine Linux distribution\n"
-            )
-            sys.exit(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " cannot determine Linux distribution\n")
-    # Fail if redhat8 + python2
+            outputfile_dict['OS'] = dist_name
+
+    # Fail if above_rht7 and python2
     if toolkit_run:
-        if redhat8 and (not PYTHON3):
-            print(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " this tool cannot run on RHEL8 and Python 2\n")
+        if above_rht7 is True and PYTHON3 is False:
+            print("{0}{1} cannot run this tool with Python2 ".format(ERROR,
+                  LOCAL_HOSTNAME) + "and RedHat OS family above 7")
     else:
-        if redhat8 and (not PYTHON3):
-            logging.debug(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " this tool cannot run on RHEL8 and Python 2, " +
-                "please check the README\n"
-            )
-            sys.exit(
-                ERROR +
-                LOCAL_HOSTNAME +
-                " this tool cannot run on RHEL8 and Python 2, " +
-                "please check the README\n")
+        if above_rht7 is True and PYTHON3 is False:
+            logging.debug("Cannot run this tool with Python2 and RedHat OS " +
+                          "family above 7")
+            sys.exit("{0}{1} cannot run this tool with Python2 ".format(ERROR,
+                     LOCAL_HOSTNAME) + "and RedHat OS family above 7. " +
+                     "Please check README for more information\n")
 
     # Check packages
     if packages_ch:
@@ -5124,7 +5119,7 @@ def main():
             outputfile_name,
             start_time_date,
             end_time_date,
-            redhat_distribution_str,
+            dist_name,
             current_processor,
             num_sockets,
             core_count,

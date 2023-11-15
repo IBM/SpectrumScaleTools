@@ -61,11 +61,11 @@ A good example is as follows:
 
 ```
 # python3 mor.py --ip 10.168.3.101
-[ INFO  ] c72f3u01 IBM Storage Scale Erasure Code Edition OS readiness version 1.80
+[ INFO  ] c72f3u01 IBM Storage Scale Erasure Code Edition OS readiness version 1.90
 [ INFO  ] c72f3u01 There is absolutely no warranty on this precheck tool
 [ INFO  ] c72f3u01 Please check https://github.com/IBM/SpectrumScaleTools for details
 [ INFO  ] c72f3u01 JSON files versions:
-[ INFO  ] c72f3u01 	supported OS:		1.8
+[ INFO  ] c72f3u01 	supported OS:		2.0
 [ INFO  ] c72f3u01 	packages: 		1.4
 [ INFO  ] c72f3u01 	SAS adapters:		1.8
 [ INFO  ] c72f3u01 	NIC adapters:		1.1
@@ -80,7 +80,7 @@ A good example is as follows:
 [ INFO  ] c72f3u01 socket 0x0053 has 28 core[s]
 [ INFO  ] c72f3u01 socket 0x0057 has 28 core[s]
 [ INFO  ] c72f3u01 has a total of 56 cores which complies with the requirements to support ECE
-[ INFO  ] c72f3u01 Red Hat Enterprise Linux 8.4 is a supported OS to run ECE
+[ INFO  ] c72f3u01 is running Red Hat Enterprise Linux 8.4
 [ INFO  ] c72f3u01 is checking package required by this tool
 [ INFO  ] c72f3u01 has dmidecode installed as expected
 [ INFO  ] c72f3u01 has pciutils installed as expected
@@ -129,9 +129,9 @@ A good example is as follows:
 [ INFO  ] c72f3u01 current tuned profile matched system settings
 [ INFO  ] c72f3u01 python 3 YAML module found
 
-	Summary of this standalone run:
-		Run started at 2023-09-26 23:56:24.207123
-		ECE Readiness version 1.80
+	Summary of this standalone instance:
+		Started at 2023-11-14 22:41:10.696427
+		OS Readiness version 1.90
 		Hostname: c72f3u01
 		OS: Red Hat Enterprise Linux 8.4
 		Architecture: x86_64
@@ -147,21 +147,27 @@ A good example is as follows:
 		HCAs in use: ConnectX-5
 		NVMe drives: 4
 		Link speed: 100000
-		Run ended at 2023-09-26 23:57:45.070620
+		Ended at 2023-11-14 22:42:31.560947
 
 [ INFO  ] c72f3u01 saved detailed information of this instance to ./10.168.3.101.json
 [ INFO  ] c72f3u01 can run IBM Storage Scale Erasure Code Edition
+
+** COLLECTED WARNINGS **
+# SMBIOS implementations newer than version 2.7 are not
+# fully supported by this version of dmidecode.
+
+** END OF WARNINGS **
 ```
 
 A failed example is as follows:
 
 ```
 # python2 mor.py --ip 10.168.2.17
-[ INFO  ] c72f4m5u17 IBM Storage Scale Erasure Code Edition OS readiness version 1.80
+[ INFO  ] c72f4m5u17 IBM Storage Scale Erasure Code Edition OS readiness version 1.90
 [ INFO  ] c72f4m5u17 There is absolutely no warranty on this precheck tool
 [ INFO  ] c72f4m5u17 Please check https://github.com/IBM/SpectrumScaleTools for details
 [ INFO  ] c72f4m5u17 JSON files versions:
-[ INFO  ] c72f4m5u17 	supported OS:		1.8
+[ INFO  ] c72f4m5u17 	supported OS:		2.0
 [ INFO  ] c72f4m5u17 	packages: 		1.4
 [ INFO  ] c72f4m5u17 	SAS adapters:		1.8
 [ INFO  ] c72f4m5u17 	NIC adapters:		1.1
@@ -176,7 +182,7 @@ A failed example is as follows:
 [ INFO  ] c72f4m5u17 socket 0x0048 has 10 core[s]
 [ INFO  ] c72f4m5u17 socket 0x0044 has 10 core[s]
 [ INFO  ] c72f4m5u17 has a total of 20 cores which complies with the requirements to support ECE
-[ INFO  ] c72f4m5u17 Red Hat Enterprise Linux Server 7.9 is a supported OS to run ECE
+[ INFO  ] c72f4m5u17 is running Red Hat Enterprise Linux Server 7.9
 [ INFO  ] c72f4m5u17 is checking package required by this tool
 [ INFO  ] c72f4m5u17 has sqlite installed as expected
 [ INFO  ] c72f4m5u17 has numactl-libs installed as expected
@@ -227,9 +233,9 @@ A failed example is as follows:
 [ INFO  ] c72f4m5u17 current tuned profile matched system settings
 [ INFO  ] c72f4m5u17 python 3 YAML module found
 
-	Summary of this standalone run:
-		Run started at 2023-09-27 00:02:34.777580
-		ECE Readiness version 1.80
+	Summary of this standalone instance:
+		Started at 2023-11-14 22:35:01.732953
+		OS Readiness version 1.90
 		Hostname: c72f4m5u17
 		OS: Red Hat Enterprise Linux Server 7.9
 		Architecture: x86_64
@@ -244,7 +250,7 @@ A failed example is as follows:
 		HCAs in use: ConnectX-4
 		NVMe drives: 3
 		Link speed: 100000
-		Run ended at 2023-09-27 00:03:04.331949
+		Ended at 2023-11-14 22:35:18.511910
 
 [ INFO  ] c72f4m5u17 saved detailed information of this instance to ./10.168.2.17.json
 [ FATAL ] c72f4m5u17 cannot run IBM Storage Scale Erasure Code Edition
