@@ -360,6 +360,7 @@ def check_device(dev, dev_type):
         return 1
     err_cnt = 0
     warn_cnt = 0
+    sz = ''
     for drive_kv in block_devs:
         if not drive_kv:
             print("{0}{1} does not exist".format(ERRO, dev))
@@ -384,7 +385,6 @@ def check_device(dev, dev_type):
             continue
         except KeyError:
             pass
-        sz = ''
         try:
             mntpnt = drive_kv['mountpoint']
             if mntpnt is not None:
