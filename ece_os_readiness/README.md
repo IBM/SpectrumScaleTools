@@ -1,257 +1,219 @@
-This tool assesses the readiness of a single node to install IBM Storage Scale Erasure Code Edition (ECE). This tool only checks for requirement of a system that can run ECE, no other software or middleware on top in the same server.
+This tool assesses the readiness of a single server to install IBM Storage Scale Erasure Code Edition (ECE). It only checks if a server could meet the requirements to run ECE.
 
-Run this tool before installing ECE with the IBM Storage Scale toolkit, it is used by the toolkit to do a more comprehensive node checking from a cluster perspective, this tool checks at node level. Each run generates a JSON file with name IP_ADDRESS.json where data is saved. In standalone mode this file is only for reference.
+Run this tool before installing ECE with the IBM Storage Scale toolkit, it is used by the toolkit to do a more comprehensive server checking from a cluster perspective, this tool checks at node level. Each run generates a JSON file IPv4_ADDRESS.json to save the check result in standalone mode.
 
 **IMPORTANT**
 This tool does not overrule the official documentation of the product. The requirements stated on the official documentation as "Minimum hardware requirements and precheck" in https://www.ibm.com/docs/en/storage-scale-ece
 
 **Known limitations**
-- Current code works correctly only if the system had one or none SAS card. It does not work properly with more than one SAS card yet. Results cannot be trusted when more than one SAS card is on the system. Multiple SAS cards checking is planned to be addressed in future.
-- On RHEL 8 series there is a warning message at the end of the run, that is because the current version of dmidecode and python modules that are shipped with RHEL from OS upstream. When the version catch up on the OS upstream repositories that message would go away. The below warning can be ignored for now.
-```
-# SMBIOS implementations newer than version 2.7 are not
-# fully supported by this version of dmidecode.
-```
-- This tool can run on RHEL 8 systems only with python3. This is due to dependencies that are not available on RHEL 8 series and python2.
+- This tool can only be executed with Python3.6 and later Python versions.
 
-**PREREQUISITES:** Before running this tool you **must** install the software prerequisites. Those are:
- * RPM packages that are listed on on packages.json file with a value of 0.
- * For Python2 -> python-dmidecode and python-ethtool RPM packages.
- * For Python3 -> python3-dmidecode and python3-ethtool python3-distro RPM packages and python pyyaml module, please check [pyyaml documentation](https://pyyaml.org/wiki/PyYAMLDocumentation) 
- * nvme-cli RPM package if NVME drive[s] exists in the system
- * storcli if SAS card[s] exists in the system, ad storcli must be able ot manage those SAS cards
- * megacli is not supported by ECE nor this tool as stated on the above linked "Minimum hardware requirements and precheck"
+**PREREQUISITES:**
+Before running this tool you **must** install the software prerequisites. They are:
+ * RPM packages listed in packages.json and marked as "OK".
+ * python3-dmidecode and python3-pyyaml. For pyyaml, please check [pyyaml documentation](https://pyyaml.org/wiki/PyYAMLDocumentation)
+ * nvme-cli RPM package if the server to be checked has NVME drive.
+ * storcli if the server to be checked has SCSI controller.
+ * MegaCli is not supported.
 
-Parameter (--ip) is required, pass the local IP where RAID traffic is going to happen. It must be an IPv4 address rather than a hostname.
 
+Usage:
 ```
 # python3 mor.py -h
-usage: mor.py [-h] [--FIPS] --ip IPv4_ADDRESS [--path PATH/] [--no-cpu-check]
-              [--no-md5-check] [--no-mem-check] [--no-os-check]
-              [--no-packages-check] [--no-net-check] [--no-storage-check]
+usage: mor.py [-h] --ip IPv4_ADDRESS [--path PATH] [--FIPS] [--no-md5-check]
+              [--no-cpu-check] [--no-os-check] [--no-pkg-check]
+              [--no-mem-check] [--no-stor-check] [--no-net-check]
               [--no-tuned-check] [--allow-sata] [--toolkit] [-V] [-v]
 
 optional arguments:
-  -h, --help           show this help message and exit
-  --FIPS               Does not run parts of the code that cannot run on FIPS
-                       systems. The run with this parameter is not complete
-                       and cannot be used for acceptance.
-  --ip IPv4_ADDRESS    Local IP address linked to device used for NSD
-  --path PATH/         Path where JSON files are located. Defaults to local
-                       directory
-  --no-cpu-check       Does not run CPU checks
-  --no-md5-check       Does not check MD5 of JSON files
-  --no-mem-check       Does not run memory checks
-  --no-os-check        Does not run OS checks
-  --no-packages-check  Does not run packages checks
-  --no-net-check       Does not run network checks
-  --no-storage-check   Does not run storage checks
-  --no-tuned-check     Does not run tuned checks
-  --allow-sata         EXPERIMENTAL: To do checks on SATA drives. Do NOT use
-                       for real checks
-  --toolkit            To indicate is being run from IBM Storage Scale
-                       install toolkit
-  -V, --version        show program's version number and exit
-  -v, --verbose        Shows debug messages on console
+  -h, --help         show this help message and exit
+  --ip IPv4_ADDRESS  local IPv4 for NSD (Network Shared Disks)
+  --path PATH        where json files are located. Default is current
+                     directory
+  --FIPS             run this tool with FIPS (Federal Information Processing
+                     Standards) mode. The FIPS mode cannot be used for
+                     acceptance
+  --no-md5-check     skip JSON file check
+  --no-cpu-check     skip CPU check
+  --no-os-check      skip OS check
+  --no-pkg-check     skip required package check
+  --no-mem-check     skip memory check
+  --no-stor-check    skip storage check
+  --no-net-check     skip network check
+  --no-tuned-check   skip tuned check
+  --allow-sata       EXPERIMENTAL: Check SATA storage device
+  --toolkit          use this option when IBM Storage Scale install-toolkit
+                     runs the tool
+  -V, --version      show program's version number and exit
+  -v, --verbose      show debug messages on console
 ```
 
-  Use --no-*-check parameters to skip certain item checking. In order to install ECE, all the tests must pass on all nodes. You can additionally gather the JSON output files and run ece_os_overview.
+Argument --ip is required. Pass the local IPv4 address which will be used by the NSD (Network Shared Disks) traffic.
+Use --no-*-check arguments to skip certain checkings. In order to install ECE, all storage servers must pass all checkings.
 
-A good example is as follows:
+A successful example may look like:
 
 ```
-# python3 mor.py --ip 10.168.3.101
-[ INFO  ] c72f3u01 IBM Storage Scale Erasure Code Edition OS readiness version 1.90
-[ INFO  ] c72f3u01 There is absolutely no warranty on this precheck tool
-[ INFO  ] c72f3u01 Please check https://github.com/IBM/SpectrumScaleTools for details
-[ INFO  ] c72f3u01 JSON files versions:
-[ INFO  ] c72f3u01 	supported OS:		2.0
-[ INFO  ] c72f3u01 	packages: 		1.4
-[ INFO  ] c72f3u01 	SAS adapters:		1.8
-[ INFO  ] c72f3u01 	NIC adapters:		1.1
-[ INFO  ] c72f3u01 	HW requirements:	1.7
-[ INFO  ] c72f3u01 current user is root
-[ INFO  ] c72f3u01 is checking processor compatibility
-[ INFO  ] c72f3u01 x86_64 processor is supported to run ECE
-[ INFO  ] c72f3u01 is checking socket count
-[ INFO  ] c72f3u01 is Intel based
-[ INFO  ] c72f3u01 has 2 socket[s] which complies with the requirements to support ECE
-[ INFO  ] c72f3u01 is checking core count
-[ INFO  ] c72f3u01 socket 0x0053 has 28 core[s]
-[ INFO  ] c72f3u01 socket 0x0057 has 28 core[s]
-[ INFO  ] c72f3u01 has a total of 56 cores which complies with the requirements to support ECE
-[ INFO  ] c72f3u01 is running Red Hat Enterprise Linux 8.4
-[ INFO  ] c72f3u01 is checking package required by this tool
-[ INFO  ] c72f3u01 has dmidecode installed as expected
-[ INFO  ] c72f3u01 has pciutils installed as expected
-[ INFO  ] c72f3u01 has sg3_utils installed as expected
-[ INFO  ] c72f3u01 has numactl installed as expected
-[ INFO  ] c72f3u01 has numactl-libs installed as expected
-[ INFO  ] c72f3u01 has tuned installed as expected
-[ INFO  ] c72f3u01 does not have MegaCli installed as expected
-[ INFO  ] c72f3u01 has sqlite installed as expected
-[ INFO  ] c72f3u01 is checking memory
-[ INFO  ] c72f3u01 has a total of 251.29 GiB memory which is sufficient to run ECE
-[ WARN  ] c72f3u01 has 8(16 in total) DIMM slot[s] which is not optimal when NVMe drive was used
-[ INFO  ] c72f3u01 all populated DIMM slots have same size
-[ INFO  ] c72f3u01 has SAS TOOL: /opt/MegaRAID/storcli/storcli64
-[ INFO  ] c72f3u01 is checking SCSI controller
-[ INFO  ] c72f3u01 has 2 SCSI controllers managed by storcli
-[ INFO  ] c72f3u01 has 2 12G SCSI controllers
-[ INFO  ] c72f3u01 has following SCSI controllers tested by IBM
-[ INFO  ] c72f3u01 Broadcom / LSI SAS3616 Fusion-MPT Tri-Mode I/O Controller Chip (IOC) (rev 02)
-[ INFO  ] c72f3u01 Broadcom / LSI SAS3616 Fusion-MPT Tri-Mode I/O Controller Chip (IOC) (rev 02)
-[ INFO  ] c72f3u01 disks attached to above 2 SCSI controllers can be used by ECE
-[ INFO  ] c72f3u01 is checking package required by SAS
-[ INFO  ] c72f3u01 has storcli installed as expected
-[ INFO  ] c72f3u01 has a total of 60 HDDs with the same size
-[ INFO  ] c72f3u01 is checking WCE setting of HDD
-[ INFO  ] c72f3u01 all SAS drives have Volatile Write Cache disabled
-[ INFO  ] c72f3u01 has 60 SAS HDDs can be used by ECE
-[ INFO  ] c72f3u01 is checking NVMe drive
-[ INFO  ] c72f3u01 has a total of 4 NVMe drives
-[ INFO  ] c72f3u01 is checking package required by NVMe drive
-[ INFO  ] c72f3u01 has nvme-cli installed as expected
-[ INFO  ] c72f3u01 all NVMe drives have the same size
-[ INFO  ] c72f3u01 all NVME drives have Volatile Write Cache disabled
-[ INFO  ] c72f3u01 all NVMe drives have the same LBA size
-[ INFO  ] c72f3u01 all NVMe drives have the same metadata size
-[ INFO  ] c72f3u01 all NVMe drives have 0 metadata size
-[ INFO  ] c72f3u01 all NVMe drives have unique IDs
-[ INFO  ] c72f3u01 has a total of 64 storage devices can be used by ECE
-[ INFO  ] c72f3u01 is checking NIC
-[ INFO  ] c72f3u01 has ConnectX-5 adapter which is supported by ECE
-[ INFO  ] c72f3u01 is checking device name of 10.168.3.101 and its speed
-[ INFO  ] c72f3u01 the IP address 10.168.3.101 is found on device ib1
-[ INFO  ] c72f3u01 has ib1 with 100000 Mb/s speed can be used by ECE
-[ INFO  ] c72f3u01 is checking tuned profile
-[ INFO  ] c72f3u01 has current tuned profile: storagescale-ece
-[ INFO  ] c72f3u01 current tuned profile matched system settings
-[ INFO  ] c72f3u01 python 3 YAML module found
+# python3 mor.py --ip 192.168.100.10
+[ INFO  ] ece10-hs IBM Storage Scale Erasure Code Edition (ECE) OS readiness version: 2.00
+[ INFO  ] ece10-hs This precheck tool with absolutely no warranty
+[ INFO  ] ece10-hs For more information, please check https://github.com/IBM/SpectrumScaleTools
+[ INFO  ] ece10-hs JSON file versions:
+[ INFO  ] ece10-hs 	supported OS: 		2.0
+[ INFO  ] ece10-hs 	packages: 		1.5
+[ INFO  ] ece10-hs 	SAS adapters: 		1.8
+[ INFO  ] ece10-hs 	NIC adapters: 		1.1
+[ INFO  ] ece10-hs 	HW requirements: 	1.8
+[ INFO  ] ece10-hs is running with 'root' user
+[ INFO  ] ece10-hs is checking system processor
+[ INFO  ] ece10-hs has x86_64 processor which is supported to run ECE
+[ INFO  ] ece10-hs is checking CPU
+[ INFO  ] ece10-hs has an Intel CPU socket with handle 0x003F. It has 8 core[s]
+[ INFO  ] ece10-hs has an Intel CPU socket with handle 0x0043. It has 8 core[s]
+[ INFO  ] ece10-hs has 2 CPU socket[s] which complies with ECE requirement
+[ INFO  ] ece10-hs has a total of 16 cores that comply with ECE requirement
+[ INFO  ] ece10-hs is running Red Hat Enterprise Linux 8.6 (Ootpa)
+[ INFO  ] ece10-hs is checking package installation state
+[ INFO  ] ece10-hs has dmidecode installed, which is as expected
+[ INFO  ] ece10-hs has pciutils installed, which is as expected
+[ INFO  ] ece10-hs has sg3_utils installed, which is as expected
+[ INFO  ] ece10-hs has numactl installed, which is as expected
+[ INFO  ] ece10-hs has numactl-libs installed, which is as expected
+[ INFO  ] ece10-hs has tuned installed, which is as expected
+[ INFO  ] ece10-hs does not have MegaCli installed, which is as expected
+[ INFO  ] ece10-hs has sqlite installed, which is as expected
+[ INFO  ] ece10-hs is querying system serial number
+[ INFO  ] ece10-hs is checking memory
+[ WARN  ] ece10-hs has 6/24(populated/total) DIMM slot[s] which is not optimal if NVMe drive was used
+[ INFO  ] ece10-hs Each in-use memory slot is populated with 32 GB memory module
+[ INFO  ] ece10-hs has a total of 188.32 GiB memory which is sufficient to run ECE
+[ INFO  ] ece10-hs is checking SCSI controller
+[ INFO  ] ece10-hs has following SCSI controller tested by IBM
+[ INFO  ] ece10-hs Broadcom / LSI MegaRAID Tri-Mode SAS3516 (rev 01)
+[ INFO  ] ece10-hs disks attached to above SCSI controller can be used by ECE
+[ WARN  ] ece10-hs has following SCSI controllers NOT tested by IBM
+[ WARN  ] ece10-hs Intel Corporation C620 Series Chipset Family SSATA Controller [AHCI mode] (rev 09)
+[ WARN  ] ece10-hs Intel Corporation C620 Series Chipset Family SATA Controller [AHCI mode] (rev 09)
+[ WARN  ] ece10-hs disks attached to above 2 SCSI controllers may not be used by ECE
+[ INFO  ] ece10-hs sets MegaRAID tool to '/opt/MegaRAID/storcli/storcli64'
+[ INFO  ] ece10-hs MegaRAID tool is available
+[ INFO  ] ece10-hs MegaRAID tool is querying the device information it manages...
+[ INFO  ] ece10-hs has 1 Controller managed by the MegaRAID tool
+[ WARN  ] ece10-hs lspci detected 3 SAS/SATA controller[s] but MegaRAID managed 1 controller[s]
+[ INFO  ] ece10-hs has 1 SAS-12G Controller[s]
+[ INFO  ] ece10-hs is checking SAS device
+[ WARN  ] ece10-hs has /dev/sdj mounted to /locallogs that cannot be used by ECE
+[ INFO  ] ece10-hs has SAS HDD /dev/sda, /dev/sdb, /dev/sdc, /dev/sdd, /dev/sde, /dev/sdg, /dev/sdi, /dev/sdl that can be used by ECE
+[ INFO  ] ece10-hs has /dev/sda, /dev/sdb, /dev/sdc, /dev/sdd, /dev/sde, /dev/sdg, /dev/sdi, /dev/sdl with Write Cache Disabled
+[ INFO  ] ece10-hs does not have any proper SAS SSD to be used by ECE
+[ INFO  ] ece10-hs It seems all SAS storage devices are managed by the MegaRAID tool
+[ INFO  ] ece10-hs has a total of 8 SAS HDD[s] that can be used by ECE
+[ INFO  ] ece10-hs is checking NVMe drive
+[ INFO  ] ece10-hs has a total of 2 NVMe drives
+[ INFO  ] ece10-hs is checking package required by NVMe drive
+[ INFO  ] ece10-hs has 'nvme-cli' installed
+[ INFO  ] ece10-hs is getting information of NVMe drive[s]
+[ INFO  ] ece10-hs all NVMe drives have the same size
+[ WARN  ] ece10-hs has /dev/nvme0n1 whose Volatile Write Cache field is unsupported. Please contract the vendor
+[ WARN  ] ece10-hs has /dev/nvme1n1 whose Volatile Write Cache field is unsupported. Please contract the vendor
+[ WARN  ] ece10-hs All NVMe drives have Volatile Write Cache Enabled (VWCE) or unknown VWCE state
+[ INFO  ] ece10-hs all NVMe drives have the same in-use LBA ds: 12
+[ INFO  ] ece10-hs all NVMe drives have the same in-use LBA ms: 0
+[ INFO  ] ece10-hs all NVMe drives have their unique IDs
+[ INFO  ] ece10-hs has a total of 10 disk[s] that can be used by ECE
+[ INFO  ] ece10-hs has IP address 192.168.100.10 set to network interface: ens6
+[ INFO  ] ece10-hs is checking network device
+[ INFO  ] ece10-hs has following network controller tested by IBM
+[ INFO  ] ece10-hs Mellanox Technologies MT27700 Family [ConnectX-4]
+[ WARN  ] ece10-hs has following network controllers NOT tested by IBM
+[ WARN  ] ece10-hs Intel Corporation Ethernet Connection X722 for 1GbE (rev 09)
+[ WARN  ] ece10-hs Intel Corporation Ethernet Connection X722 for 1GbE (rev 09)
+[ INFO  ] ece10-hs has ens6 with speed 100000 Mb/s. It complies with ECE required 24000 Mb/s
+[ INFO  ] ece10-hs is checking tuned profile
+[ INFO  ] ece10-hs has Current active profile: storagescale-ece
+[ INFO  ] ece10-hs current system settings match the preset profile
+[ INFO  ] ece10-hs is checking Python3 YAML
+[ INFO  ] ece10-hs has Python3 YAML module installed
 
 	Summary of this standalone instance:
-		Started at 2023-11-14 22:41:10.696427
-		OS Readiness version 1.90
-		Hostname: c72f3u01
-		OS: Red Hat Enterprise Linux 8.4
-		Architecture: x86_64
-		Sockets: 2
-		Cores per socket: [28, 28]
-		Memory: 251.29 GiBytes
-		DIMM slots: 16
-		DIMM slots in use: 8
-		SAS HBAs in use: Broadcom / LSI SAS3616 Fusion-MPT Tri-Mode I/O Controller Chip (IOC) (rev 02)
-		                 Broadcom / LSI SAS3616 Fusion-MPT Tri-Mode I/O Controller Chip (IOC) (rev 02)
-		JBOD SAS HDD drives: 60
-		JBOD SAS SSD drives: 0
-		HCAs in use: ConnectX-5
-		NVMe drives: 4
-		Link speed: 100000
-		Ended at 2023-11-14 22:42:31.560947
+		Started at 2024-06-05 09:54:43.992
+		OS Readiness version 2.00
+		Hostname: ece10-hs
+		OS: Red Hat Enterprise Linux 8.6 (Ootpa)
+		Processor architecture: x86_64
+		CPU sockets: 2
+		CPU cores per socket: [8, 8]
+		Memory size in total: 188 GiBytes
+		DIMM slots in total: 24
+		DIMM slots in use:   6
+		DIMM slots unused:   18
+		SCSI controller:
+		    Broadcom / LSI MegaRAID Tri-Mode SAS3516 (rev 01)
+		JBOD SAS HDD device: 8
+		JBOD SAS SSD device: 0
+		NVMe drive:          2
+		Network controller:
+		    Mellanox Technologies MT27700 Family [ConnectX-4]
+		Link speed of given IPv4: 100000 Mb/s
+		Ended at 2024-06-05 09:54:50.957
 
-[ INFO  ] c72f3u01 saved detailed information of this instance to ./10.168.3.101.json
-[ INFO  ] c72f3u01 can run IBM Storage Scale Erasure Code Edition
+[ INFO  ] ece10-hs saved detailed information of this instance to ./192.168.100.10.json
+[ INFO  ] ece10-hs can run IBM Storage Scale Erasure Code Edition
 
-** COLLECTED WARNINGS **
-# SMBIOS implementations newer than version 2.7 are not
-# fully supported by this version of dmidecode.
-
-** END OF WARNINGS **
-```
-
-A failed example is as follows:
 
 ```
-# python2 mor.py --ip 10.168.2.17
-[ INFO  ] c72f4m5u17 IBM Storage Scale Erasure Code Edition OS readiness version 1.90
-[ INFO  ] c72f4m5u17 There is absolutely no warranty on this precheck tool
-[ INFO  ] c72f4m5u17 Please check https://github.com/IBM/SpectrumScaleTools for details
-[ INFO  ] c72f4m5u17 JSON files versions:
-[ INFO  ] c72f4m5u17 	supported OS:		2.0
-[ INFO  ] c72f4m5u17 	packages: 		1.4
-[ INFO  ] c72f4m5u17 	SAS adapters:		1.8
-[ INFO  ] c72f4m5u17 	NIC adapters:		1.1
-[ INFO  ] c72f4m5u17 	HW requirements:	1.7
-[ INFO  ] c72f4m5u17 current user is root
-[ INFO  ] c72f4m5u17 is checking processor compatibility
-[ INFO  ] c72f4m5u17 x86_64 processor is supported to run ECE
-[ INFO  ] c72f4m5u17 is checking socket count
-[ INFO  ] c72f4m5u17 is Intel based
-[ INFO  ] c72f4m5u17 has 2 socket[s] which complies with the requirements to support ECE
-[ INFO  ] c72f4m5u17 is checking core count
-[ INFO  ] c72f4m5u17 socket 0x0048 has 10 core[s]
-[ INFO  ] c72f4m5u17 socket 0x0044 has 10 core[s]
-[ INFO  ] c72f4m5u17 has a total of 20 cores which complies with the requirements to support ECE
-[ INFO  ] c72f4m5u17 is running Red Hat Enterprise Linux Server 7.9
-[ INFO  ] c72f4m5u17 is checking package required by this tool
-[ INFO  ] c72f4m5u17 has sqlite installed as expected
-[ INFO  ] c72f4m5u17 has numactl-libs installed as expected
-[ INFO  ] c72f4m5u17 has numactl installed as expected
-[ INFO  ] c72f4m5u17 has sg3_utils installed as expected
-[ INFO  ] c72f4m5u17 does not have MegaCli installed as expected
-[ INFO  ] c72f4m5u17 has tuned installed as expected
-[ INFO  ] c72f4m5u17 has dmidecode installed as expected
-[ INFO  ] c72f4m5u17 has pciutils installed as expected
-[ INFO  ] c72f4m5u17 is checking memory
-[ INFO  ] c72f4m5u17 has a total of 125.0 GiB memory which is sufficient to run ECE
-[ WARN  ] c72f4m5u17 has 4(24 in total) DIMM slot[s] which is not optimal when NVMe drive was used
-[ INFO  ] c72f4m5u17 all populated DIMM slots have same size
-[ INFO  ] c72f4m5u17 has SAS TOOL: /opt/MegaRAID/storcli/storcli64
-[ INFO  ] c72f4m5u17 is checking SCSI controller
-[ INFO  ] c72f4m5u17 has 1 SCSI controller managed by storcli
-[ INFO  ] c72f4m5u17 has a 12G SCSI controller
-[ INFO  ] c72f4m5u17 has following SCSI controller tested by IBM
-[ INFO  ] c72f4m5u17 Broadcom / LSI MegaRAID Tri-Mode SAS3516 (rev 01)
-[ INFO  ] c72f4m5u17 disks attached to above SCSI controller can be used by ECE
-[ INFO  ] c72f4m5u17 is checking package required by SAS
-[ INFO  ] c72f4m5u17 has storcli installed as expected
-[ INFO  ] c72f4m5u17 has a total of 3 HDDs with the same size
-[ INFO  ] c72f4m5u17 is checking WCE setting of HDD
-[ FATAL ] c72f4m5u17 134:7 has Write Cache Enabled. This is not supported by ECE
-[ FATAL ] c72f4m5u17 134:6 has Write Cache Enabled. This is not supported by ECE
-[ FATAL ] c72f4m5u17 134:5 has Write Cache Enabled. This is not supported by ECE
-[ WARN  ] c72f4m5u17 has a total of 4 SATA devices but they can NOT be used by ECE
-[ INFO  ] c72f4m5u17 has 3 SAS HDDs can be used by ECE
-[ INFO  ] c72f4m5u17 is checking NVMe drive
-[ INFO  ] c72f4m5u17 has a total of 3 NVMe drives
-[ INFO  ] c72f4m5u17 is checking package required by NVMe drive
-[ INFO  ] c72f4m5u17 has nvme-cli installed as expected
-[ INFO  ] c72f4m5u17 all NVMe drives have the same size
-[ INFO  ] c72f4m5u17 all NVME drives have Volatile Write Cache disabled
-[ INFO  ] c72f4m5u17 all NVMe drives have the same LBA size
-[ INFO  ] c72f4m5u17 all NVMe drives have the same metadata size
-[ INFO  ] c72f4m5u17 all NVMe drives have 0 metadata size
-[ INFO  ] c72f4m5u17 all NVMe drives have unique IDs
-[ INFO  ] c72f4m5u17 has a total of 6 storage devices can be used by ECE
-[ INFO  ] c72f4m5u17 is checking NIC
-[ INFO  ] c72f4m5u17 has ConnectX-4 adapter which is supported by ECE
-[ INFO  ] c72f4m5u17 is checking device name of 10.168.2.17 and its speed
-[ INFO  ] c72f4m5u17 the IP address 10.168.2.17 is found on device ib0
-[ INFO  ] c72f4m5u17 has ib0 with 100000 Mb/s speed can be used by ECE
-[ INFO  ] c72f4m5u17 is checking tuned profile
-[ INFO  ] c72f4m5u17 has current tuned profile: spectrumscale-ece
-[ INFO  ] c72f4m5u17 current tuned profile matched system settings
-[ INFO  ] c72f4m5u17 python 3 YAML module found
+
+A failed example might look like:
+
+```
+# python3 mor.py --ip 192.168.100.10 --no-md5-check --no-cpu-check --no-os-check --no-pkg-check --no-mem-check --no-stor-check --no-net-check --no-tuned-check --allow-sata
+[ INFO  ] ece10-hs IBM Storage Scale Erasure Code Edition (ECE) OS readiness version: 2.00
+[ INFO  ] ece10-hs This precheck tool with absolutely no warranty
+[ INFO  ] ece10-hs For more information, please check https://github.com/IBM/SpectrumScaleTools
+[ INFO  ] ece10-hs JSON file versions:
+[ INFO  ] ece10-hs 	supported OS: 		2.0
+[ INFO  ] ece10-hs 	packages: 		1.5
+[ INFO  ] ece10-hs 	SAS adapters: 		1.8
+[ INFO  ] ece10-hs 	NIC adapters: 		1.1
+[ INFO  ] ece10-hs 	HW requirements: 	1.8
+[ INFO  ] ece10-hs is running with 'root' user
+[ FATAL ] ece10-hs has skipped json file MD5 checksum checking
+[ FATAL ] ece10-hs has skipped CPU checking
+[ FATAL ] ece10-hs has skipped OS checking
+[ FATAL ] ece10-hs has skipped package checking
+[ INFO  ] ece10-hs is querying system serial number
+[ FATAL ] ece10-hs has skipped memory checking
+[ FATAL ] ece10-hs has skipped storage checking
+[ FATAL ] ece10-hs has skipped network checking
+[ FATAL ] ece10-hs has skipped tuned checking
+[ INFO  ] ece10-hs is checking Python3 YAML
+[ INFO  ] ece10-hs has Python3 YAML module installed
 
 	Summary of this standalone instance:
-		Started at 2023-11-14 22:35:01.732953
-		OS Readiness version 1.90
-		Hostname: c72f4m5u17
-		OS: Red Hat Enterprise Linux Server 7.9
-		Architecture: x86_64
-		Sockets: 2
-		Cores per socket: [10, 10]
-		Memory: 125.0 GiBytes
-		DIMM slots: 24
-		DIMM slots in use: 4
-		SAS HBAs in use: Broadcom / LSI MegaRAID Tri-Mode SAS3516 (rev 01)
-		JBOD SAS HDD drives: 3
-		JBOD SAS SSD drives: 0
-		HCAs in use: ConnectX-4
-		NVMe drives: 3
-		Link speed: 100000
-		Ended at 2023-11-14 22:35:18.511910
+		Started at 2024-06-24 15:24:36.916
+		OS Readiness version 2.00
+		Hostname: ece10-hs
+		OS: Unknown
+		Processor architecture: Unknown
+		CPU sockets: 0
+		CPU cores per socket: []
+		Memory size in total: 0 GiBytes
+		DIMM slots in total: 0
+		DIMM slots in use:   0
+		DIMM slots unused:   0
+		SCSI controller:
+		    No supported SCSI controller
+		JBOD SAS HDD device: 0
+		JBOD SAS SSD device: 0
+		NVMe drive:          0
+		Network controller:
+		    No explicitly supported network controller
+		Link speed of given IPv4: Unknown
+		Ended at 2024-06-24 15:24:37.062
 
-[ INFO  ] c72f4m5u17 saved detailed information of this instance to ./10.168.2.17.json
-[ FATAL ] c72f4m5u17 cannot run IBM Storage Scale Erasure Code Edition
+[ INFO  ] ece10-hs saved detailed information of this instance to ./192.168.100.10.json
+[ FATAL ] ece10-hs is missing some checks. The precheck tool can NOT claim this system could run IBM Storage Scale Erasure Code Edition
+[ FATAL ] ece10-hs cannot run IBM Storage Scale Erasure Code Edition
+
+
 ```

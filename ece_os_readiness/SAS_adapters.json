@@ -16,5 +16,7 @@
   "SAS3616 Fusion-MPT": "OK",
   "MegaRAID 12GSAS/PCIe SAS38xx": "OK",
   "MegaRAID 12GSAS/PCIe SAS39xx": "OK",
+  "Fusion-MPT 12GSAS/PCIe SAS38xx": "OK",
+  "Fusion-MPT 12GSAS/PCIe SAS39xx": "OK",
   "VMware PVSCSI SCSI Controller": "OK"
 }

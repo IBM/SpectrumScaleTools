@@ -1,14 +1,9 @@
 {
-  "json_version": "1.7",
+  "json_version": "1.8",
   "MIN_SOCKET": 1,
   "MIN_CORES": 16,
   "MIN_GB_RAM": 60,
   "MAX_DRIVES": 64,
   "MIN_LINK_SPEED": 24000,
-  "MIN_SOCKET_S390X": 0,
-  "MIN_CORES_S390X": 4,
-  "MIN_GB_RAM_S390X": 15,
-  "MAX_DRIVES_S390X": 3,
-  "MIN_LINK_SPEED_S390X": 9999,
   "MIN_LOGHOME_DRIVE_SIZE": 536870912000
 }

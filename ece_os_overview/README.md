@@ -1,56 +1,50 @@
-This tool uses the JSON files from ece_os_readiness in [SpectrumScaleTools](https://github.com/IBM/SpectrumScaleTools). This tools with no warranty and it just a helper to asses the hardware for usage with Storage Scale Erasure Code Edition.
+This tool uses the JSON files from ece_os_readiness in [SpectrumScaleTools](https://github.com/IBM/SpectrumScaleTools) to do the overview precheck. It simply helps to check the servers on which IBM Storage Scale Erasure Code Edition would be installed.
 
-It does check for overall checks of homogeneity across the nodes. The assumption is that the nodes are belonging to the same recovery group (RG).
+**Known limitations**
+This tool checks the homogeneity of all storage servers. The precondition is that all servers will be configured to the same recovery group (RG).
 
-It does not check for the number of nodes, and that is in purpose. Please notice this tool is designed to run with the IBM Storage Scale install toolkit
-
+Usage:
 ```
-# ./mor_overview.py -h
-usage: mor_overview.py [-h] --json-files JSON_CSV_FILES_LIST [--no-checks]
-                       [--path PATH/] [-v]
+# python3 mor_overview.py -h
+usage: mor_overview.py [-h] --json-files JSON_FILES [--no-check] [--path PATH]
+                       [-v]
 
 optional arguments:
   -h, --help            show this help message and exit
-  --json-files JSON_CSV_FILES_LIST
-                        CSV JSON list of files to process
-  --no-checks           Does not run any checks, just loads the files and
-                        continues
-  --path PATH/          Path ending with / where JSON files are located.
-                        Defaults to local directory
+  --json-files JSON_FILES
+                        Comma-separated Json files
+  --no-check            Skip all homogeneity checks
+  --path PATH           where JSON files are located. Default is current
+                        directory
   -v, --version         show program's version number and exit
-  ```
+```
 
-  To run this tool you need to at least pass the mandatory parameter *--json-files JSON_CSV_FILES_LIST*
+A successful example may look like:
 
 ```
-# python3 mor_overview.py --json-files 10.240.128.4.json,10.240.128.5.json,10.240.128.7.json
-[ INFO  ]  Starting summary of individual ECE checks
-[ INFO  ]  ece-bm-2 with IP address 10.240.128.4 passed the individual ECE checks
-[ INFO  ]  ece-bm-3 with IP address 10.240.128.5 passed the individual ECE checks
-[ INFO  ]  ece-bm-1 with IP address 10.240.128.7 passed the individual ECE checks
-[ INFO  ]  Individual ECE checks passed on all configured ECE nodes
-[ INFO  ]  Starting overall ECE checks version 1.81
-[ INFO  ]  Completed overall ECE checks
-[ INFO  ]  All ECE nodes have the same processor architecture
-[ INFO  ]  All ECE nodes have the same number of sockets
-[ INFO  ]  All ECE nodes have the same number of cores per socket
-[ INFO  ]  All ECE nodes have the same number DIMM slots and modules
-[ INFO  ]  All ECE nodes have the same system memory
-[ INFO  ]  All ECE nodes have the same NIC model
-[ INFO  ]  All ECE nodes have the same network link speed
-[ INFO  ]  All ECE nodes have the same SAS model
-[ INFO  ]  All ECE nodes have NVMe drives or all ECE nodes have no NVMe drives
-[ INFO  ]  All ECE nodes have the same number of NVMe drives
-[ INFO  ]  There are 24 NVMe drive[s] that can be used by the ECE cluster
-[ INFO  ]  All ECE nodes have NVMe drives that have unique euids/nguids.
-[ INFO  ]  All ECE nodes have SSD drives or all ECE nodes have no SSD drives
-[ INFO  ]  All ECE nodes have the same number of SSD drives
-[ INFO  ]  There are no SSD drives that can be used by ECE
-[ INFO  ]  All ECE nodes have HDD drives or all ECE nodes have no HDD drives
-[ INFO  ]  All ECE nodes have the same number of HDD drives
-[ INFO  ]  There are no HDD drives that can be used by ECE
-[ INFO  ]  There are 12 or more drives of one technology that can be used by the ECE cluster
-[ INFO  ]  There are 24 drive[s] that can be used by the ECE cluster, the maximum number of drives per Recovery Group is 512
-[ INFO  ]  All nodes have unique serial numbers
-[ INFO  ]  All ECE checks passed, installation can continue
+# python3 mor_overview.py --json-files 192.168.100.9.json,192.168.100.10.json,192.168.100.11.json
+[ INFO  ] IBM Storage Scale Erasure Code Edition (ECE) OS overview version: 1.90
+[ INFO  ] Summarize separate storage server checks
+[ INFO  ] All nodes marked the node ready state as True
+[ INFO  ] All nodes have the same processor architecture: x86_64
+[ INFO  ] All nodes have the same CPU socket number: 2
+[ INFO  ] All nodes have the same CPU core distribution: [8, 8]
+[ INFO  ] All nodes have the same vacant DIMM slot number: 6
+[ INFO  ] All nodes have the same memory size: 188.32 GiB
+[ INFO  ] All nodes have the same network controller: Mellanox Technologies MT27700 Family [ConnectX-4]
+[ INFO  ] All nodes have the same to-be-used network interface link speed: 100000 Mb/s
+[ INFO  ] All nodes have the same SCSI controller: Broadcom / LSI MegaRAID Tri-Mode SAS3516 (rev 01)
+[ INFO  ] All nodes have the same NVMe device number: 2
+[ INFO  ] This cluster has a total NVMe device number: 6
+[ INFO  ] All NVMe drives in this cluster have unique euis and nguids
+[ INFO  ] All nodes hit SSD error. They may not have available SSD device
+[ INFO  ] All nodes have the same HDD device number: 8
+[ INFO  ] This cluster has a total HDD device number: 24
+[ INFO  ] All HDD devices in this cluster have unique wwns
+[ INFO  ] All nodes have the same total storage device number: 10
+[ INFO  ] This cluster has a total storage device number: 30
+[ INFO  ] All nodes have unique serial number
+[ INFO  ] ECE overview checks are completed
+[ INFO  ] All ECE overview checks passed. Installation continues
 ```
+
