@@ -52,7 +52,9 @@ DISK_ALIGNMENT_BYTES = 4096
 VALID_CODES = {'4+2p': (4, 2),
                '4+3p': (4, 3),
                '8+2p': (8, 2),
-               '8+3p': (8, 3)}
+               '8+3p': (8, 3),
+               '16+2p': (16, 2),
+               '16+3p': (16, 3)}
 
 # block size in MiB
 VALID_BLOCKSIZES = [1, 2, 4, 8, 16]
