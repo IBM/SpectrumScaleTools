@@ -768,6 +768,8 @@ def check_processor() -> str:
         proc_name = 'unknown'
     elif proc_name == 'x86_64':
         print(f"{INFO} has x86_64 processor which is supported to run ECE")
+    elif proc_name == 'aarch64':
+        print(f"{INFO} has aarch64 processor which is supported to run ECE")
     else:
         print(f"{ERROR} has {proc_name} processor which is not supported to " +
               "run ECE")
@@ -921,7 +923,7 @@ def check_cpu_by_lscpu(
 def check_cpu_by_dmidecode(
         min_socket: int,
         min_cores: int) -> Tuple[bool, int, List]:
-    """Use dmidecode to check CPU soccket and core.
+    """Use dmidecode to check CPU socket and core.
     Args:
         min_socket: the minimum requirement of socket number.
         min_cores: the minimum requirement of total core number.
@@ -1072,9 +1074,17 @@ def check_cpu_by_dmidecode(
                   f"has {core_cnt} core[s]")
 
         else:
-            cpu_error = True
-            print(f"{ERROR} has {ver} CPU socket with handle {key}. It is " +
-                  "NOT supported by ECE")
+            # ARM processors can have many different vendors, so we do not have a definite
+            # way to check if it is supported or not. For now, we assume
+            # that any ARM CPU with aarch64 architecture is supported.
+            if 'aarch64' in check_processor():
+                print(f"{INFO} has an ARM CPU socket with handle {key}. It " +
+                      f"has {core_cnt} core[s]")
+            else:
+                cpu_error = True
+                print(f"{ERROR} has {ver} CPU socket with handle {key}. It is " +
+                    "NOT supported by ECE")
+
         sock_num += 1
         core_cnt = int(core_cnt)
         total_core_num += core_cnt
