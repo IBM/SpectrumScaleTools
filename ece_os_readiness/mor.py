@@ -892,6 +892,8 @@ def check_cpu_by_lscpu(
         print(f"{INFO} has AMD CPU")
     elif 'Intel' in model_name:
         print(f"{INFO} has Intel CPU")
+    elif 'aarch64' in model_name:
+        print(f"{INFO} has aarch64 CPU")
     else:
         print(f"{ERROR} has {model_name} CPU which is not supported by ECE")
         return True, 0, []
@@ -5269,7 +5271,7 @@ def main():
     core_dists = []
     if check_cpu is True:
         proc_name = check_processor()
-        if proc_name != 'x86_64':
+        if proc_name != 'x86_64' and proc_name != 'aarch64':
             fatal_err_cnt += 1
         cpu_err = True
         if virt_type == 'vmware':
