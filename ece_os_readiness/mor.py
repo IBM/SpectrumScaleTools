@@ -1689,11 +1689,19 @@ def get_nvme_info() -> Tuple[bool, Dict]:
         modnum: str = ""
         sernum: str = ""
         try:
-            devpath = dev_kv['DevicePath'].strip()
-            firmwr = dev_kv['Firmware']
-            modnum = dev_kv['ModelNumber']
-            sernum = dev_kv['SerialNumber']
-            psize = int(dev_kv['PhysicalSize'])
+            if not "DevicePath" in dev_kv: # If no DevicePath, it is a system with no SCSI controllers
+                no_scsi_ctrlr = True
+                devpath = "/dev/" + dev_kv["Subsystems"][0]["Controllers"][0]["Namespaces"][0]["NameSpace"]
+                firmwr = dev_kv["Subsystems"][0]["Controllers"][0]["Firmware"]
+                modnum = dev_kv["Subsystems"][0]["Controllers"][0]["ModelNumber"]
+                sernum = dev_kv["Subsystems"][0]["Controllers"][0]["SerialNumber"]
+                psize = int(dev_kv["Subsystems"][0]["Controllers"][0]["Namespaces"][0]["PhysicalSize"])
+            else:
+                devpath = dev_kv['DevicePath'].strip()
+                firmwr = dev_kv['Firmware']
+                modnum = dev_kv['ModelNumber']
+                sernum = dev_kv['SerialNumber']
+                psize = int(dev_kv['PhysicalSize'])
         except BaseException as e:
             nvme_err = True
             log.debug("Tried to extract NVMe items from %s but hit exception: "
@@ -3804,8 +3812,6 @@ def check_physical_storage(
     ctrlr_ok_but_no_dev = False
 
     scsi_ctrlr_kv = mark_physical_scsi_controller(pci_kv, supp_scsi_ctrlr_kv)
-    if not scsi_ctrlr_kv:
-        return {}
 
     stor_kv = {}
     ok_scsi_ctrlrs = []
