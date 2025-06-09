@@ -15,7 +15,7 @@ import shlex
 from typing import Any, Tuple, Dict, List
 
 # This Module version
-MODULE_VER = "2.00"
+MODULE_VER = "2.10"
 
 # GIT URLs
 GITREPOURL = "https://github.com/IBM/SpectrumScaleTools"
