@@ -7,7 +7,7 @@ import sys
 from typing import Tuple, Dict
 
 # This Module version
-MODULE_VER = "1.90"
+MODULE_VER = "2.00"
 
 # Colorful constants
 RED = '\033[91m'
@@ -777,9 +777,8 @@ def check_scsi_controller(
                   f"controller on {node}")
             continue
         if not scsictrlrs_str:
-            errcnt += 1
-            print(f"{ERROR} Cannot extract SCSI controller on {node}")
-            continue
+            print(f"{WARN} Cannot extract SCSI controller on {node}")
+            scsictrlrs_str = 'None'
         scsi_controllers.append(scsictrlrs_str)
         scsi_ctrlr_kv[node] = scsictrlrs_str
     if errcnt != 0:
@@ -789,6 +788,9 @@ def check_scsi_controller(
     dedup_scsi_ctrlr_len = len(dedup_scsi_ctrlrs)
     if dedup_scsi_ctrlr_len == 1:
         scsictrlr = dedup_scsi_ctrlrs[0]
+        if scsictrlr == 'None':
+            print(f"{WARN} No SCSI controller info found in the input files for any of the nodes")
+            print(f"{WARN} If the nodes are known to not have SCSI controllers ignore this warning")
         print(f"{INFO} All nodes have the same SCSI controller: {scsictrlr}")
     else:
         print(f"{WARN} Not all nodes have the same SCSI controller[s]")
