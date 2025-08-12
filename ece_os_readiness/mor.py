@@ -42,7 +42,7 @@ MSM_APP = ""
 # Define expected MD5 checksums of json files
 MD5CKSUM_KV = {
     'HW_requirements.json': 'a0e12e5bd9e0ddd2c8d6471c5ba78fe2',
-    'NIC_adapters.json': 'dca06f75452f45c65658660fb8e969e6',
+    'NIC_adapters.json': '59dc2cb2e22f3b75d6391d72d2fb9083',
     'packages.json': '27954578df4a1673ef5599af7609e0fe',
     'SAS_adapters.json': '36b54f83786e2529b63c6c9b44a2cb6e',
     'supported_OS.json': '9b7c8cb13784472f43e36df20249119f'
