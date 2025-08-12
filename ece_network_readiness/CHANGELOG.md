@@ -95,3 +95,12 @@ Changelog:
     - Removed OS version check, using Linux kernel version check instead.
     - Meraged packages_*.json to packages.json.
     - Refactored functions and messages.
+- 1.31
+    - Upgraded nsdperf to include the following improvements/bug fixes:
+        - Fixed race condition in RdmaDevice::createCQ()
+        - Fixed log message when posting new RDMA receive work requests.
+        - Fixed "handleCQEvent: error" error messages on sub-test completion
+        when RDMA SEND is enabled ("rdma all").
+        - Support RDMA Connection Manager environments where multiple IP
+        addresses/aliases are configured for a RDMA adapter port.
+        - Fix compiler warnings.
