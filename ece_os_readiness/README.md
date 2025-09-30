@@ -20,32 +20,29 @@ Before running this tool you **must** install the software prerequisites. They a
 Usage:
 ```
 # python3 mor.py -h
-usage: mor.py [-h] --ip IPv4_ADDRESS [--path PATH] [--FIPS] [--no-md5-check]
+usage: mor.py [-h] --ip IPv4_ADDRESS [--path PATH] [--no-json-cksum-check]
               [--no-cpu-check] [--no-os-check] [--no-pkg-check]
               [--no-mem-check] [--no-stor-check] [--no-net-check]
               [--no-tuned-check] [--allow-sata] [--toolkit] [-V] [-v]
 
 optional arguments:
-  -h, --help         show this help message and exit
-  --ip IPv4_ADDRESS  local IPv4 for NSD (Network Shared Disks)
-  --path PATH        where json files are located. Default is current
-                     directory
-  --FIPS             run this tool with FIPS (Federal Information Processing
-                     Standards) mode. The FIPS mode cannot be used for
-                     acceptance
-  --no-md5-check     skip JSON file check
-  --no-cpu-check     skip CPU check
-  --no-os-check      skip OS check
-  --no-pkg-check     skip required package check
-  --no-mem-check     skip memory check
-  --no-stor-check    skip storage check
-  --no-net-check     skip network check
-  --no-tuned-check   skip tuned check
-  --allow-sata       EXPERIMENTAL: Check SATA storage device
-  --toolkit          use this option when IBM Storage Scale install-toolkit
-                     runs the tool
-  -V, --version      show program's version number and exit
-  -v, --verbose      show debug messages on console
+  -h, --help         		show this help message and exit
+  --ip IPv4_ADDRESS  		local IPv4 for NSD (Network Shared Disks)
+  --path PATH       		where json files are located. Default is current
+                    		directory
+  --no-json-cksum-check		skip json file checksum verification
+  --no-cpu-check     		skip CPU check
+  --no-os-check      		skip OS check
+  --no-pkg-check     		skip required package check
+  --no-mem-check     		skip memory check
+  --no-stor-check    		skip storage check
+  --no-net-check     		skip network check
+  --no-tuned-check   		skip tuned check
+  --allow-sata       		EXPERIMENTAL: Check SATA storage device
+  --toolkit          		use this option when IBM Storage Scale install-toolkit
+                     		runs the tool
+  -V, --version      		show program's version number and exit
+  -v, --verbose      		show debug messages on console
 ```
 
 Argument --ip is required. Pass the local IPv4 address which will be used by the NSD (Network Shared Disks) traffic.
@@ -166,7 +163,7 @@ A successful example may look like:
 A failed example might look like:
 
 ```
-# python3 mor.py --ip 192.168.100.10 --no-md5-check --no-cpu-check --no-os-check --no-pkg-check --no-mem-check --no-stor-check --no-net-check --no-tuned-check --allow-sata
+# python3 mor.py --ip 192.168.100.10 --no-json-cksum-check --no-cpu-check --no-os-check --no-pkg-check --no-mem-check --no-stor-check --no-net-check --no-tuned-check --allow-sata
 [ INFO  ] ece10-hs IBM Storage Scale Erasure Code Edition (ECE) OS readiness version: 2.00
 [ INFO  ] ece10-hs This precheck tool with absolutely no warranty
 [ INFO  ] ece10-hs For more information, please check https://github.com/IBM/SpectrumScaleTools
@@ -177,7 +174,7 @@ A failed example might look like:
 [ INFO  ] ece10-hs 	NIC adapters: 		1.1
 [ INFO  ] ece10-hs 	HW requirements: 	1.8
 [ INFO  ] ece10-hs is running with 'root' user
-[ FATAL ] ece10-hs has skipped json file MD5 checksum checking
+[ FATAL ] ece10-hs has skipped json file checksum verification
 [ FATAL ] ece10-hs has skipped CPU checking
 [ FATAL ] ece10-hs has skipped OS checking
 [ FATAL ] ece10-hs has skipped package checking
