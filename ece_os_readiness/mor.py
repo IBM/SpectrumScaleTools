@@ -39,13 +39,13 @@ ERROR = f"[ {RED}FATAL{RESETCOL} ] {HOSTNAME}"
 MSM_NAME = ""
 MSM_APP = ""
 
-# Define expected MD5 checksums of json files
-MD5CKSUM_KV = {
-    'HW_requirements.json': 'a0e12e5bd9e0ddd2c8d6471c5ba78fe2',
-    'NIC_adapters.json': '59dc2cb2e22f3b75d6391d72d2fb9083',
-    'packages.json': '27954578df4a1673ef5599af7609e0fe',
-    'SAS_adapters.json': '36b54f83786e2529b63c6c9b44a2cb6e',
-    'supported_OS.json': '9b7c8cb13784472f43e36df20249119f'
+# Define expected SHA256 checksums of json files
+SHA256CKSUM_KV = {
+    'HW_requirements.json': 'f3f99ee0897b4ff168bcdd1ee07ae47114b4ab5b5ccc6c86c7b788f571eb83da',
+    'NIC_adapters.json': '6c78c45fca3a18010e14d1e0d218e62b5aa72bf7846017503f44409e8e872bde',
+    'packages.json': '8b5e85d20ea9b03cc66546b0499aa54a30c065cbd619e30a59ca75844b2b410a',
+    'SAS_adapters.json': 'b780e4720cbb69c54a0fbd08fb401533d69088605116c660a8c3d3ee31fd7baa',
+    'supported_OS.json': '934c081ccc1871ce3b995bb788d8e10ae8c893a1baddd2c5e2fa07eaa98941ca'
 }
 
 # (SAS Controller) Device Interface type in output of MegaRAID tool
@@ -112,7 +112,7 @@ def parse_arguments() -> Tuple[str, ...]:
     """Parse input arguments
     Args:
     Returns:
-        (ip_addr, path, fips, check_md5, check_cpu, check_os, check_pkg,
+        (ip_addr, path, verify_json_cksum, check_cpu, check_os, check_pkg,
          check_mem, check_stor, check_net, check_tuned, toolkit, check_sata,
          isverbose)
     """
@@ -137,19 +137,10 @@ def parse_arguments() -> Tuple[str, ...]:
         type=str,
         default='./')
 
-    parser.add_argument(
-        '--FIPS',
-        action='store_true',
-        dest='fips',
-        help='run this tool with FIPS (Federal Information Processing ' +
-        'Standards) mode. The FIPS mode cannot be used for acceptance',
-        default=False)
-
-    parser.add_argument(
-        '--no-md5-check',
+    parser.add_argument('--no-json-cksum-check',
         action='store_false',
-        dest='check_md5',
-        help='skip JSON file check',
+        dest='verify_json_cksum',
+        help='skip JSON file checksum verification',
         default=True)
 
     parser.add_argument(
@@ -239,7 +230,7 @@ def parse_arguments() -> Tuple[str, ...]:
         sys.exit(f"{ERROR} tried to normalize path: {args.path} but hit " +
                  f"exception: {e}\n")
 
-    return (args.ip_addr, json_dir, args.fips, args.check_md5, args.check_cpu,
+    return (args.ip_addr, json_dir, args.verify_json_cksum, args.check_cpu,
             args.check_os, args.check_pkg, args.check_mem, args.check_stor,
             args.check_net, args.check_tuned, args.check_sata, args.toolkit,
             args.isverbose)
@@ -472,13 +463,12 @@ def load_json(filepath: str) -> Dict[str, str]:
         print(f"{WARN} got empty KV pair from {filepath}")
     return kv
 
-
-def get_md5_cksum(filepath: str) -> str:
-    """Calculate the MD5 checksum of the input file path.
+def get_cksum(filepath: str) -> str:
+    """Calculate the SHA256 checksum of the input file path.
     Args:
         filepath: file path.
     Returns:
-        md5 checksum of file if succeeded. Else, 'Unknown'.
+        sha256 checksum of file if succeeded. Else, 'Unknown'.
     """
     if not filepath or isinstance(filepath, str) is False:
         print(f"{WARN} Invalid parameter filepath: {filepath}")
@@ -486,67 +476,72 @@ def get_md5_cksum(filepath: str) -> str:
     if os.path.isfile(filepath) is False:
         print(f"{ERROR} {filepath} is not a file")
         return 'Unknown'
-    md5_cksum = ''
+
+    cksum = ''
+    algo = "sha256"
     try:
         with open(filepath, mode="rb") as fh:
             data = fh.read()
-            md5_hash = hashlib.md5(data)
-            md5_cksum = md5_hash.hexdigest()
+            hash_obj = hashlib.new(algo)   # create hash object based on algo
+            hash_obj.update(data)
+            cksum = hash_obj.hexdigest()
     except BaseException as e:
-        log.debug("Tried to calculate MD5 cksum of %s but hit exception: %s",
-                  filepath, e)
-        print(f"{ERROR} hit excpetion while calculating MD5 checksum of " +
+        log.debug("Tried to calculate %s cksum of %s but hit exception: %s",
+                  algo, filepath, e)
+        print(f"{ERROR} hit exception while calculating {algo} checksum of " +
               f"{filepath}")
         return 'Unknown'
-    if not md5_cksum:
-        md5_cksum = 'Unknown'
-        print(f"{ERROR} cannot calculate MD5 checksum of {filepath}")
-    log.debug("Got %s %s", md5_cksum, filepath)
-    return md5_cksum
+    if not cksum:
+        cksum = 'Unknown'
+        print(f"{ERROR} cannot calculate {algo} checksum of {filepath}")
+    log.debug("Got %s checksum %s %s", algo, cksum, filepath)
+    return cksum
 
 
-def verify_file_checksum(file_md5_kv: Dict) -> Tuple[int, Dict]:
+def verify_file_checksum(file_cksum_kv: Dict) -> Tuple[int, Dict]:
     """Verify if the file has not been modified.
     Args:
-        file_md5_kv: {fileName: calcMd5cksum,...}.
+        file_cksum_kv: {fileName: calc_cksum,...}.
     Returns:
-        (errcnt, md5_stat_kv)
+        (errcnt, sha256_stat_kv)
     """
-    if not file_md5_kv or isinstance(file_md5_kv, dict) is False:
-        print(f"{ERROR} Invalid parameter file_md5_kv: {file_md5_kv}")
+    if not file_cksum_kv or isinstance(file_cksum_kv, dict) is False:
+        print(f"{ERROR} Invalid parameter file_cksum_kv: {file_cksum_kv}")
         return 1, {}
 
-    log.debug("Verify MD5 checksum of json files")
+    algo = "SHA256"
+    log.debug("Verify %s checksum of json files", algo)
+
     errcnt = 0
-    md5_stat_kv = {}
-    for key, val in file_md5_kv.items():
-        expe_md5 = ''
+    sha256_stat_kv = {}
+    for key, val in file_cksum_kv.items():
+        expe_cksum = ''
         try:
-            expe_md5 = MD5CKSUM_KV[key]
+            expe_cksum= SHA256CKSUM_KV[key]
         except KeyError as e:
             errcnt += 1
-            log.debug("Tried to extract expected md5 checksum value of %s but "
+            log.debug("Tried to extract expected {algo} checksum value of %s but "
                       "hit KeyError: %s", key, e)
-            print(f"{ERROR} hit exception while extracting expected MD5 " +
+            print(f"{ERROR} hit exception while extracting expected {algo} " +
                   f"checksum of {key}")
             continue
-        if not expe_md5:
+        if not expe_cksum:
             errcnt += 1
-            log.debug("Got empty expected MD5 checksum of %s", key)
-            print(f"{ERROR} got empty expected MD5 checksum of {key}")
+            log.debug("Got empty expected {algo} checksum of %s", key)
+            print(f"{ERROR} got empty expected {algo} checksum of {key}")
             continue
-        if val == expe_md5:
-            md5_stat_kv[key] = True
+        if val == expe_cksum:
+            sha256_stat_kv[key] = True
         else:
             errcnt += 1
-            md5_stat_kv[key] = False
-            log.debug("%s has MD5: %s", key, val)
-            log.debug("But its expectation MD5 is %s", expe_md5)
-            print(f"{ERROR} MD5 checksum of {key} is NOT as expected. The " +
+            sha256_stat_kv[key] = False
+            log.debug("%s has %s: %s", algo, key, val)
+            log.debug("But its expectation %s is %s", algo, expe_cksum)
+            print(f"{ERROR} {algo} checksum of {key} is NOT as expected. The " +
                   "file is unreliable")
-    log.debug("Got errcnt: %s, md5_stat_kv: %s", errcnt, md5_stat_kv)
+    log.debug("Got errcnt: %s, sha256_stat_kv: %s", errcnt, sha256_stat_kv)
 
-    return errcnt, md5_stat_kv
+    return errcnt, sha256_stat_kv
 
 
 def get_json_versions(
@@ -5074,7 +5069,7 @@ def summarize_check_result(
     if enable_all_ckecks is True and fatal_err_cnt == 0:
         print(f"{INFO} can run IBM Storage Scale Erasure Code Edition\n")
     if enable_all_ckecks is False:
-        print(f"{ERROR} is missing some checks. The precheck tool can NOT " +
+        print(f"{WARN} is missing some checks. The precheck tool can NOT " +
               "claim this system could run IBM Storage Scale Erasure Code " +
               "Edition")
     if fatal_err_cnt != 0:
@@ -5097,7 +5092,7 @@ def main():
     final_kv['start_time'] = start_time
     final_kv['MOR_VERSION'] = MODULE_VER
 
-    (ip_addr, json_dir, fips, check_md5, check_cpu, check_os, check_pkg,
+    (ip_addr, json_dir, verify_json_cksum, check_cpu, check_os, check_pkg,
      check_mem, check_stor, check_net, check_tuned, check_sata, toolkit,
      isverbose) = parse_arguments()
 
@@ -5125,17 +5120,20 @@ def main():
             print(f"{ERROR} suggests choosing IP address from {active_ips}\n")
             return fatal_err_cnt
 
-    if check_md5 is True and check_cpu is True and check_os is True and \
+    if verify_json_cksum is True and check_cpu is True and check_os is True and \
        check_pkg is True and check_mem is True and check_stor is True and \
        check_net is True and check_tuned is True:
         enable_all_ckecks = True
         log.debug("All tests are enabled")
+    elif verify_json_cksum is False:
+        print(f"{WARN} JSON checksum verification skipped as requested")
+        log.debug("Skipping JSON checksum verification due to flag --no-json-cksum-check")
     else:
         enable_all_ckecks = False
         fatal_err_cnt += 1
     log.debug("Are all tests enabled? %s", enable_all_ckecks)
 
-    # JSON loads and calculate and store MD5
+    # JSON loads and calculate and store checksums
     supp_os_fp = os.path.join(json_dir, 'supported_OS.json')
     supp_pkg_fp = os.path.join(json_dir, 'packages.json')
     supp_scsi_ctrlr_fp = os.path.join(json_dir, 'SAS_adapters.json')
@@ -5164,58 +5162,42 @@ def main():
     if isroot is False:
         fatal_err_cnt += 1
 
-    supp_os_md5 = ''
-    supp_pkg_md5 = ''
-    supp_sas_md5 = ''
-    supp_nic_md5 = ''
-    requ_param_md5 = ''
-    if fips is True:
-        log.debug("FIPS mode enabled")
-        print(f"{ERROR} is running checks with FIPS mode")
-        fatal_err_cnt += 1
-        check_md5 = False
-        supp_os_md5 = "FIPS"
-        supp_pkg_md5 = "FIPS"
-        supp_sas_md5 = "FIPS"
-        supp_nic_md5 = "FIPS"
-        requ_param_md5 = "FIPS"
-    else:
-        log.debug("Calculate MD5 checksums")
-        supp_os_md5 = get_md5_cksum(supp_os_fp)
-        supp_pkg_md5 = get_md5_cksum(supp_pkg_fp)
-        supp_sas_md5 = get_md5_cksum(supp_scsi_ctrlr_fp)
-        supp_nic_md5 = get_md5_cksum(supp_nic_fp)
-        requ_param_md5 = get_md5_cksum(requ_param_fp)
-        if supp_os_md5 == 'Unknown':
-            fatal_err_cnt += 1
-        if supp_pkg_md5 == 'Unknown':
-            fatal_err_cnt += 1
-        if supp_sas_md5 == 'Unknown':
-            fatal_err_cnt += 1
-        if supp_nic_md5 == 'Unknown':
-            fatal_err_cnt += 1
-        if requ_param_md5 == 'Unknown':
+    supp_os_algo = ''
+    supp_pkg_algo = ''
+    supp_sas_algo = ''
+    supp_nic_algo = ''
+    requ_param_algo = ''
+
+    log.debug("Calculate SHA256 checksums")
+    supp_os_algo     = get_cksum(supp_os_fp)
+    supp_pkg_algo    = get_cksum(supp_pkg_fp)
+    supp_sas_algo    = get_cksum(supp_scsi_ctrlr_fp)
+    supp_nic_algo    = get_cksum(supp_nic_fp)
+    requ_param_algo  = get_cksum(requ_param_fp)
+    # Count failures
+    for chk in (supp_os_algo, supp_pkg_algo, supp_sas_algo, supp_nic_algo, requ_param_algo):
+        if chk == 'Unknown':
             fatal_err_cnt += 1
 
-    md5_to_check_kv = {
-        'supported_OS.json': supp_os_md5,
-        'packages.json': supp_pkg_md5,
-        'SAS_adapters.json': supp_sas_md5,
-        'NIC_adapters.json': supp_nic_md5,
-        'HW_requirements.json': requ_param_md5
+    sha256_to_check_kv = {
+        'supported_OS.json': supp_os_algo,
+        'packages.json': supp_pkg_algo,
+        'SAS_adapters.json': supp_sas_algo,
+        'NIC_adapters.json': supp_nic_algo,
+        'HW_requirements.json': requ_param_algo
     }
 
-    final_kv['json_file_md5'] = md5_to_check_kv
+    final_kv['json_file_cksum'] = sha256_to_check_kv
 
-    if check_md5 is True:
+    if verify_json_cksum is True:
         (cksum_errcnt,
-         md5_stat_kv) = verify_file_checksum(md5_to_check_kv)
+         cksum_stat_kv) = verify_file_checksum(sha256_to_check_kv)
         fatal_err_cnt += cksum_errcnt
-        final_kv['md5_checking_state'] = md5_stat_kv
+        final_kv['cksum_checking_state'] = cksum_stat_kv
     else:
-        fatal_err_cnt += 1
-        print(f"{ERROR} has skipped json file MD5 checksum checking")
-        final_kv['md5_checking_state'] = 'Unknown'
+        # fatal_err_cnt += 1
+        print(f"{WARN} has skipped json file checksum verification")
+        final_kv['cksum_checking_state'] = 'Unknown'
 
     log.debug("Set required parameters to variables")
     min_socket = 0
@@ -5247,7 +5229,7 @@ def main():
         'local_hostname': HOSTNAME,
         'IP_address': ip_addr,
         'json_file_location': json_dir,
-        'check_md5': check_md5,
+        'verify_json_cksum': verify_json_cksum,
         'check_CPU': check_cpu,
         'check_OS': check_os,
         'check_package': check_pkg,
