@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import re
 import shlex
+import shutil
 
 from typing import Any, Tuple, Dict, List
 
@@ -43,9 +44,9 @@ MSM_APP = ""
 SHA256CKSUM_KV = {
     'HW_requirements.json': 'f3f99ee0897b4ff168bcdd1ee07ae47114b4ab5b5ccc6c86c7b788f571eb83da',
     'NIC_adapters.json': '6c78c45fca3a18010e14d1e0d218e62b5aa72bf7846017503f44409e8e872bde',
-    'packages.json': '8b5e85d20ea9b03cc66546b0499aa54a30c065cbd619e30a59ca75844b2b410a',
+    'packages.json': 'f16351cf083905534fafec61a3dc562d33f6d73fd77d3762c00372b2ce86db4a',
     'SAS_adapters.json': 'b780e4720cbb69c54a0fbd08fb401533d69088605116c660a8c3d3ee31fd7baa',
-    'supported_OS.json': '934c081ccc1871ce3b995bb788d8e10ae8c893a1baddd2c5e2fa07eaa98941ca'
+    'supported_OS.json': 'a2a29da84edf54152f6c533869c7dd1534f28ec542e0faee0f07e3063bc9dc72'
 }
 
 # (SAS Controller) Device Interface type in output of MegaRAID tool
@@ -1233,7 +1234,12 @@ def is_pkg_installed(rpm_pkg: str) -> bool:
         print(f"{ERROR} Invalid parameter rpm_pkg: {rpm_pkg}")
         return 1
 
-    cmd = f"rpm -q {rpm_pkg}"
+    if shutil.which("dpkg-query"):
+        cmd = f"dpkg-query -W -f='${{Package}}-${{Version}}\\n' {rpm_pkg}"
+        # cmd = f"dpkg -s {rpm_pkg}"
+    elif shutil.which("rpm"):
+        cmd = f"rpm -q {rpm_pkg}"
+
     try:
         out, err, rc = runcmd(cmd)
     except BaseException as e:
@@ -1266,22 +1272,36 @@ def check_package(supp_pkg_kv: Dict) -> Tuple[int, Dict]:
         key = str(key)
         if key == "json_version":
             continue
-        rc = is_pkg_installed(key)
+
+        # Handle packages with os-specific names
+        if isinstance(val, dict):
+            if shutil.which("dpkg-query"):
+                pkg_name = val.get("Ubuntu", key)
+            elif shutil.which("rpm"):
+                pkg_name = val.get("RHEL", key)
+            else:
+                pkg_name = key
+            status = val.get("status", "OK")
+        else:
+            pkg_name = key
+            status = val
+
+        rc = is_pkg_installed(pkg_name)
         if rc == 0:
             pkg_ins_kv[key] = 'installed'
-            inst_msg = f"has {key} installed"
-            if val == 'OK':
+            inst_msg = f"has {pkg_name} installed"
+            if status == 'OK':
                 print(f"{INFO} {inst_msg}, which is as expected")
-            elif val == 'NOK':
+            elif status == 'NOK':
                 pkg_errcnt += 1
                 print(f"{ERROR} {inst_msg}, which is *NOT* as expected")
         else:
             pkg_ins_kv[key] = 'does_not_install'
-            inst_msg = f"does not have {key} installed"
-            if val == 'OK':
+            inst_msg = f"does not have {pkg_name} installed"
+            if status == 'OK':
                 pkg_errcnt += 1
                 print(f"{ERROR} {inst_msg}, which is *NOT* as expected")
-            elif val == 'NOK':
+            elif status == 'NOK':
                 print(f"{INFO} {inst_msg}, which is as expected")
     log.debug("Got pkg_errcnt: %d, pkg_ins_kv: %s", pkg_errcnt, pkg_ins_kv)
     return pkg_errcnt, pkg_ins_kv

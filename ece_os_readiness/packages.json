@@ -2,10 +2,26 @@
   "json_version": "1.5",
   "dmidecode": "OK",
   "pciutils": "OK",
-  "sg3_utils": "OK",
+  "sg3_utils": {
+    "Ubuntu": "sg3-utils",
+    "RHEL": "sg3_utils",
+    "status": "OK"
+  },
   "numactl": "OK",
-  "numactl-libs": "OK",
+  "numactl-libs": {
+    "Ubuntu": "numactl",
+    "RHEL": "numactl-libs",
+    "status": "OK"
+  },
   "tuned": "OK",
-  "MegaCli": "NOK",
-  "sqlite": "OK"
+  "MegaCli": {
+    "Ubuntu": "megacli",
+    "RHEL": "MegaCli",
+    "status": "NOK"
+  },
+  "sqlite": {
+    "Ubuntu": "sqlite3",
+    "RHEL": "sqlite",
+    "status": "OK"
+  }
 }

@@ -21,6 +21,7 @@ from math import sqrt, ceil
 from functools import reduce
 import re
 import csv
+import shutil
 
 # This script version, independent from the JSON versions
 VERSION = "1.30"
@@ -670,8 +671,21 @@ def is_rpm_package_installed(
     if err_cnt > 0:
         sys.exit("{}Bye!\n".format(QUIT))
 
+    # Determine which package manager to use
+    if shutil.which("dpkg-query"):
+        pkg_manager = "Ubuntu"
+        pkg_cmd = "dpkg-query -W -f='${{Package}}-${{Version}}\\n' {}"
+    elif shutil.which("rpm"):
+        pkg_cmd = "rpm -q {}"
+
+    if pkg == "gcc-c++":
+        if pkg_manager == "Ubuntu":
+            pkg = "g++"
+        else:
+            pkg = "gcc-c++"
+
     if '|' not in pkg:
-        cmd = "rpm -q {}".format(pkg)
+        cmd = pkg_cmd.format(pkg)
         _, _, rc = run_cmd_on_host(host, cmd)
         if rc != 0:
             print("{0}{1} does not have {2} installed".format(ERRO, host, pkg))
@@ -683,7 +697,7 @@ def is_rpm_package_installed(
         subpkgs = pkg.split('|')
         found = False
         for subpkg in subpkgs:
-            cmd = "rpm -q {}".format(subpkg)
+            cmd = pkg_cmd.format(subpkg)
             _, _, rc = run_cmd_on_host(host, cmd)
             if rc == 0:
                 found = True
