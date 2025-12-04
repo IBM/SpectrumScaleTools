@@ -4,5 +4,6 @@
   "SUSE Linux Enterprise Server": "NOK",
   "Red Hat Enterprise Linux Server": "OK",
   "Red Hat Enterprise Linux": "OK",
-  "CentOS Linux": "WARN"
+  "CentOS Linux": "WARN",
+  "Ubuntu": "OK"
 }
