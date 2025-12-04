@@ -1067,7 +1067,7 @@ def check_cpu_by_dmidecode(
                       f"socket {key} which is NOT supported by ECE")
             print(f"{INFO} has an AMD CPU socket with handle {key}. It has " +
                   f"{core_cnt} core[s]")
-        elif 'Intel' in version:
+        elif 'Intel'.casefold() in version.casefold():
             print(f"{INFO} has an Intel CPU socket with handle {key}. It " +
                   f"has {core_cnt} core[s]")
 
