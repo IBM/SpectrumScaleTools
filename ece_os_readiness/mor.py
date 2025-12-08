@@ -328,6 +328,8 @@ def get_ip_of_ifname(netif_name: str) -> str:
     if not netif_name or isinstance(netif_name, str) is False:
         print(f"{ERROR} Invalid parameter netif_name: {netif_name}")
         return ''
+    if "@" in netif_name:
+        netif_name = netif_name.split('@')[0]
 
     errcnt = 0
     cmd = f"ip addr show {netif_name}"
@@ -4722,6 +4724,8 @@ def get_speed_of_network_interface(netif: str) -> int:
     if not netif or isinstance(netif, str) is False:
         print(f"{ERROR} Invalid parameter netif: {netif}")
         return -1
+    if "@" in netif:
+        netif = netif.split('@')[0]
     speed_file = f"/sys/class/net/{netif}/speed"
     speed = -1
     try:
