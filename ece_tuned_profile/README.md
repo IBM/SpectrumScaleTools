@@ -19,6 +19,10 @@ NOTE: How to add profile to the system, refer to [Chapter 3. Customizing TuneD p
     - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/*** directory with new directory named as ***/etc/tuned/storagescale-ece***
     - Apply the profile: ***tuned-adm profile storagescale-ece***
 
+    For Ubuntu 24.0:
+    - Copy the directory which has the suffix ***_UB\**** to the ***/etc/tuned/*** directory with new directory named as ***/etc/tuned/storagescale-ece***
+    - Apply the profile: ***tuned-adm profile storagescale-ece***
+
   - 5.1.9 and subsequent version 
     For RHEL 10:
     - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/profiles*** directory with new directory named as ***/etc/tuned/profiles/storagescale-ece***
@@ -28,10 +32,14 @@ NOTE: How to add profile to the system, refer to [Chapter 3. Customizing TuneD p
     - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/*** directory with new directory named as ***/etc/tuned/storagescale-ece***
     - Apply the profile: ***tuned-adm profile storagescale-ece***
 
+    For Ubuntu 24.0:
+    - Copy the directory which has the suffix ***_UB\**** to the ***/etc/tuned/*** directory with new directory named as ***/etc/tuned/storagescale-ece***
+    - Apply the profile: ***tuned-adm profile storagescale-ece***
+
   - 5.1.8 and previous version
     For RHEL 10:
     - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/profiles*** directory with new directory named as ***/etc/tuned/profiles/storagescale-ece***
-    - Apply the profile: ***tuned-adm profile storagescale-ece***
+    - Apply the profile: ***tuned-adm profile spectrumscale-ece***
     
     For versions earlier than RHEL 10:
     - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/*** directory with new directory named as ***/etc/tuned/spectrumscale-ece***
