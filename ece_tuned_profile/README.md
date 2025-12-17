@@ -38,7 +38,7 @@ NOTE: How to add profile to the system, refer to [Chapter 3. Customizing TuneD p
 
   - 5.1.8 and previous version
     For RHEL 10:
-    - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/profiles*** directory with new directory named as ***/etc/tuned/profiles/storagescale-ece***
+    - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/profiles*** directory with new directory named as ***/etc/tuned/profiles/spectrumscale-ece***
     - Apply the profile: ***tuned-adm profile spectrumscale-ece***
     
     For versions earlier than RHEL 10:
