@@ -12,6 +12,7 @@ import hashlib
 import re
 import shlex
 import shutil
+import glob
 
 from typing import Any, Tuple, Dict, List
 
@@ -1651,6 +1652,30 @@ def get_nvme_idns_kv(devpath: str) -> Dict:
     return idns_kv
 
 
+def is_boot_or_inuse_drive(devpath: str) -> bool:
+    result = subprocess.run(
+        ["lsblk", "-J", "-o", "NAME,MOUNTPOINT", devpath],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True
+    )
+
+    data = json.loads(result.stdout)
+    devices = [data] if "blockdevices" not in data else data["blockdevices"]
+    stack = devices[:]  # use a stack to traverse devices
+    while stack:
+        dev = stack.pop()
+        mount = dev.get("mountpoint")
+        if mount:
+            if mount in ("/", "/boot"):
+                return True
+            return True  # any mount means in use
+        # Add children to stack if they exist
+        if "children" in dev:
+            stack.extend(dev["children"])
+    return False
+
+
 def get_nvme_info() -> Tuple[bool, Dict]:
     """Get information of NVMe drives.
     Args:
@@ -1709,12 +1734,23 @@ def get_nvme_info() -> Tuple[bool, Dict]:
         sernum: str = ""
         try:
             if not "DevicePath" in dev_kv: # If no DevicePath, it is a system with no SCSI controllers
-                no_scsi_ctrlr = True
-                devpath = "/dev/" + dev_kv["Subsystems"][0]["Controllers"][0]["Namespaces"][0]["NameSpace"]
-                firmwr = dev_kv["Subsystems"][0]["Controllers"][0]["Firmware"]
-                modnum = dev_kv["Subsystems"][0]["Controllers"][0]["ModelNumber"]
-                sernum = dev_kv["Subsystems"][0]["Controllers"][0]["SerialNumber"]
-                psize = int(dev_kv["Subsystems"][0]["Controllers"][0]["Namespaces"][0]["PhysicalSize"])
+                subsys_idx = 0
+                devpath = "/dev/" + dev_kv["Subsystems"][subsys_idx]["Controllers"][0]["Namespaces"][0]["NameSpace"]
+                while subsys_idx < len(dev_kv["Subsystems"]):
+                    if is_boot_or_inuse_drive(devpath):
+                        # Checking for next drive in subsystems
+                        subsys_idx += 1
+                        if subsys_idx < len(dev_kv["Subsystems"]):
+                            devpath = "/dev/" + dev_kv["Subsystems"][subsys_idx]["Controllers"][0]["Namespaces"][0]["NameSpace"]
+                        else:
+                            break
+                    else:
+                        # Drive is not a boot drive
+                        break
+                firmwr = dev_kv["Subsystems"][subsys_idx]["Controllers"][0]["Firmware"]
+                modnum = dev_kv["Subsystems"][subsys_idx]["Controllers"][0]["ModelNumber"]
+                sernum = dev_kv["Subsystems"][subsys_idx]["Controllers"][0]["SerialNumber"]
+                psize = int(dev_kv["Subsystems"][subsys_idx]["Controllers"][0]["Namespaces"][0]["PhysicalSize"])
             else:
                 devpath = dev_kv['DevicePath'].strip()
                 firmwr = dev_kv['Firmware']
@@ -2601,7 +2637,22 @@ def get_nvme_drive_num() -> int:
         print(f"{WARN} hit exception while listing {nvme_dir}")
         return -1
 
-    nvme_num = len(nvmes)
+    nvme_num = 0
+    for ctrl in nvmes:
+        # Glob all namespaces for this controller
+        for devpath in glob.glob(f"/dev/{ctrl}n*"):
+            if not os.path.exists(devpath):
+                log.debug("Namespace device %s does not exist, skipping", devpath)
+                continue
+            # Exclude boot or in-use device
+            try:
+                if is_boot_or_inuse_drive(devpath):
+                    log.debug("%s is boot or in use, skipping", devpath)
+                    continue
+            except Exception as e:
+                log.debug("Error checking %s: %s", devpath, e)
+                continue
+            nvme_num += 1
     log.debug("Got nvme_num: %s from %s", nvme_num, nvme_dir)
 
     if nvme_num == 0:
