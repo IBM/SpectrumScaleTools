@@ -77,7 +77,7 @@ DEPE_PKG = "packages.json"
 HOST_FL = "hosts.json"
 
 # IP RE
-IPPATT = re.compile('.*inet\s+(?P<ip>.*)\/\d+')
+IPPATT = re.compile(r'.*inet\s+(?P<ip>.*)\/\d+')
 
 PYTHON2 = False
 try:
@@ -676,6 +676,7 @@ def is_rpm_package_installed(
         pkg_manager = "Ubuntu"
         pkg_cmd = "dpkg-query -W -f='${{Package}}-${{Version}}\\n' {}"
     elif shutil.which("rpm"):
+        pkg_manager = "RPM"
         pkg_cmd = "rpm -q {}"
 
     if pkg == "gcc-c++":
