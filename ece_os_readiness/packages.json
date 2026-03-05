@@ -11,6 +11,7 @@
   "numactl-libs": {
     "Ubuntu": "numactl",
     "RHEL": "numactl-libs",
+    "AzureLinux": "numactl",
     "status": "OK"
   },
   "tuned": "OK",

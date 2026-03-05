@@ -5,5 +5,6 @@
   "Red Hat Enterprise Linux Server": "OK",
   "Red Hat Enterprise Linux": "OK",
   "CentOS Linux": "WARN",
-  "Ubuntu": "OK"
+  "Ubuntu": "OK",
+  "Microsoft Azure": "OK"
 }
