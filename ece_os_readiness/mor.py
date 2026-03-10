@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import glob
+import ipaddress
 
 from typing import Any, Tuple, Dict, List
 
@@ -45,9 +46,9 @@ MSM_APP = ""
 SHA256CKSUM_KV = {
     'HW_requirements.json': 'f3f99ee0897b4ff168bcdd1ee07ae47114b4ab5b5ccc6c86c7b788f571eb83da',
     'NIC_adapters.json': '6c78c45fca3a18010e14d1e0d218e62b5aa72bf7846017503f44409e8e872bde',
-    'packages.json': 'f16351cf083905534fafec61a3dc562d33f6d73fd77d3762c00372b2ce86db4a',
+    'packages.json': '6eb37ae7dce2d61a275db66c09313f169d0336e9d906cd4a8d4821c292fad885',
     'SAS_adapters.json': 'b780e4720cbb69c54a0fbd08fb401533d69088605116c660a8c3d3ee31fd7baa',
-    'supported_OS.json': 'a2a29da84edf54152f6c533869c7dd1534f28ec542e0faee0f07e3063bc9dc72'
+    'supported_OS.json': 'ad5d320bc1990f46b5e24aeceb97f8e44ceb77d354f0a2b81a9db0fcd8951a0f'
 }
 
 # (SAS Controller) Device Interface type in output of MegaRAID tool
@@ -125,8 +126,8 @@ def parse_arguments() -> Tuple[str, ...]:
         required=True,
         action='store',
         dest='ip_addr',
-        help='local IPv4 for NSD (Network Shared Disks)',
-        metavar='IPv4_ADDRESS',
+        help='local IPv4 or IPv6 for NSD (Network Shared Disks)',
+        metavar='IP_ADDRESS',
         type=str,
         default="NO IP")
 
@@ -238,46 +239,6 @@ def parse_arguments() -> Tuple[str, ...]:
             args.isverbose)
 
 
-def is_ipv4(ipv4: str) -> bool:
-    """Is the input string IPv4 format?
-    Args:
-        ipv4: string of an IP address.
-    Returns:
-        True if input ipv4 is a correct format, else, False.
-    """
-    if not ipv4 or isinstance(ipv4, str) is False:
-        print(f"{ERROR} Invalid parameter ipv4: {ipv4}")
-        return False
-
-    ipv4_segs = ipv4.split('.')
-    ipv4_seg_num = len(ipv4_segs)
-    if ipv4_seg_num != 4:
-        print(f"{ERROR} {ipv4} is an invalid IPv4 format")
-        return False
-
-    for seg in ipv4_segs:
-        if seg.isdigit() is not True:
-            log.debug("%s has incorrect segment: %s", ipv4, seg)
-            print(f"{ERROR} {ipv4} contains non-numeric segment")
-            return False
-        digit_seg = -1
-        try:
-            digit_seg = int(seg)
-        except ValueError as e:
-            log.debug("Tried to convert %s to integer but hit ValueError: %s",
-                      seg, e)
-            print(f"{ERROR} hit exception while converting {seg} to integer")
-            return False
-
-        if digit_seg < 0 or digit_seg > 255:
-            log.debug("Segment %s in %s is out of range", seg, ipv4)
-            print(f"{ERROR} IPv4 {ipv4} is invalid")
-            return False
-
-    log.debug("IPv4 %s is valid", ipv4)
-    return True
-
-
 def runcmd(
         cmd: str,
         ignore_exception: bool=False) -> Tuple[str, str, int]:
@@ -319,16 +280,18 @@ def runcmd(
     return str(stdout), str(stderr), int(rc)
 
 
-def get_ip_of_ifname(netif_name: str) -> str:
-    """Extract the IP address of input network interface name.
+def get_ip_of_ifname(netif_name: str) -> List[str]:
+    """Extract the IP addresses of input network interface name.
     Args:
         netif_name: network controller logical name (network interface).
     Returns:
-        IP address if succeeded. Else, ''.
+        IP address if succeeded. Else, [].
     """
-    if not netif_name or isinstance(netif_name, str) is False:
+    ip_list = []
+    if not netif_name or not isinstance(netif_name, str):
         print(f"{ERROR} Invalid parameter netif_name: {netif_name}")
-        return ''
+        return ip_list
+
     if "@" in netif_name:
         netif_name = netif_name.split('@')[0]
 
@@ -352,29 +315,32 @@ def get_ip_of_ifname(netif_name: str) -> str:
         print(f"{WARN} got empty stdout while showing IP address of " +
               f"{netif_name}")
     if errcnt != 0:
-        return ''
+        return ip_list
 
     lines = out.strip().splitlines()
-    inet_ip = ''
     for line in lines:
-        if 'inet' in line and 'inet6' not in line:
+        line = line.strip()
+        if line.startswith('inet '):  # IPv4
             try:
-                inet_ip = line.split()[1].split('/')[0].strip()
+                ip_list.append(line.split()[1].split('/')[0].strip())
             except BaseException as e:
-                log.debug("Tried to extract IP address from %s but hit "
-                          "exception: %s", line, e)
-                print(f"{ERROR} hit exception while extracting IP address of " +
-                      f"{netif_name}")
-        if inet_ip:
-            break
-    if inet_ip:
-        log.debug("IP address of %s is %s", netif_name, inet_ip)
+                log.debug("Tried to extract IPv4 from %s but hit exception: %s", line, e)
+                print(f"{ERROR} hit exception while extracting IPv4 of {netif_name}")
+        elif line.startswith('inet6 '):  # IPv6
+            try:
+                ip_list.append(line.split()[1].split('/')[0].strip())
+            except BaseException as e:
+                log.debug("Tried to extract IPv6 from %s but hit exception: %s", line, e)
+                print(f"{ERROR} hit exception while extracting IPv6 of {netif_name}")
+    if ip_list:
+        log.debug("IP addresses of %s are %s", netif_name, ip_list)
     else:
-        log.debug("%s does not have an IP address", netif_name)
-    return inet_ip
+        log.debug("%s does not have any IP addresses", netif_name)
+
+    return ip_list
 
 
-def map_active_netif_to_ip() -> Dict[str, str]:
+def map_active_netif_to_ip() -> Dict[str, List[str]]:
     """Map the active network interface to IP Address.
     Args:
     Returns:
@@ -406,30 +372,29 @@ def map_active_netif_to_ip() -> Dict[str, str]:
         return {}
 
     lines = out.strip().splitlines()
-    lgnm_ip_kv = {}
     lgc_names = []
     for line in lines:
-        lgc_name = ''
         line = line.strip()
         if 'UP,LOWER_UP' in line and 'state UP' in line:
             try:
                 lgc_name = line.split(':')[1].strip()
+                lgc_names.append(lgc_name)
             except BaseException as e:
                 log.debug("Tried to extract active network interface name from "
                           "%s but hit exception: %s", line, e)
                 print(f"{WARN} hit exception while extracting active network " +
                       "interface name")
-        if lgc_name:
-            lgc_names.append(lgc_name)
+
     log.debug("Got active net if logical names: %s", lgc_names)
     if not lgc_names:
         print(f"{ERROR} cannot extract any active network interface name")
         return {}
 
+    lgnm_ip_kv: Dict[str, List[str]] = {}
     for lgnm in lgc_names:
-        ip = get_ip_of_ifname(lgnm)
-        if ip:
-            lgnm_ip_kv[lgnm] = ip
+        ips = get_ip_of_ifname(lgnm)
+        if ips:
+            lgnm_ip_kv[lgnm] = ips
 
     log.debug("Mapped net logical name to IP, got: %s", lgnm_ip_kv)
     if not lgnm_ip_kv:
@@ -1276,12 +1241,22 @@ def check_package(supp_pkg_kv: Dict) -> Tuple[int, Dict]:
         if key == "json_version":
             continue
 
-        # Handle packages with os-specific names
+        # Handle all packages with os-specific names.
         if isinstance(val, dict):
             if shutil.which("dpkg-query"):
                 pkg_name = val.get("Ubuntu", key)
             elif shutil.which("rpm"):
-                pkg_name = val.get("RHEL", key)
+                # pkg_name = val.get("RHEL", key)
+                try:
+                    with open("/etc/os-release") as f:
+                        os_release = f.read().lower()
+                except Exception:
+                    os_release = ""
+
+                if "azurelinux" in os_release:
+                    pkg_name = val.get("AzureLinux", val.get("RHEL", key))
+                else:
+                    pkg_name = val.get("RHEL", key)
             else:
                 pkg_name = key
             status = val.get("status", "OK")
@@ -1651,7 +1626,6 @@ def get_nvme_idns_kv(devpath: str) -> Dict:
         print(f"{WARN} cannot extract id-ns of {devpath}")
     return idns_kv
 
-
 def is_boot_or_inuse_drive(devpath: str) -> bool:
     result = subprocess.run(
         ["lsblk", "-J", "-o", "NAME,MOUNTPOINT", devpath],
@@ -1659,9 +1633,9 @@ def is_boot_or_inuse_drive(devpath: str) -> bool:
         text=True,
         check=True
     )
-
     data = json.loads(result.stdout)
     devices = [data] if "blockdevices" not in data else data["blockdevices"]
+
     stack = devices[:]  # use a stack to traverse devices
     while stack:
         dev = stack.pop()
@@ -2638,6 +2612,7 @@ def get_nvme_drive_num() -> int:
         return -1
 
     nvme_num = 0
+
     for ctrl in nvmes:
         # Glob all namespaces for this controller
         for devpath in glob.glob(f"/dev/{ctrl}n*"):
@@ -2653,8 +2628,8 @@ def get_nvme_drive_num() -> int:
                 log.debug("Error checking %s: %s", devpath, e)
                 continue
             nvme_num += 1
-    log.debug("Got nvme_num: %s from %s", nvme_num, nvme_dir)
 
+    log.debug("Got nvme_num: %s from %s", nvme_num, nvme_dir)
     if nvme_num == 0:
         print(f"{WARN} does not have any NVMe drive")
     elif nvme_num == 1:
@@ -4661,6 +4636,9 @@ def map_network_pci_to_logicalname() -> Dict[str, str]:
     """
     errcnt = 0
     cmd = 'lshw -class network -quiet'
+    out = ''
+    err = ''
+    rc = 1
     try:
         out, err, rc = runcmd(cmd)
     except BaseException as e:
@@ -4775,8 +4753,10 @@ def get_speed_of_network_interface(netif: str) -> int:
     if not netif or isinstance(netif, str) is False:
         print(f"{ERROR} Invalid parameter netif: {netif}")
         return -1
+
     if "@" in netif:
         netif = netif.split('@')[0]
+
     speed_file = f"/sys/class/net/{netif}/speed"
     speed = -1
     try:
@@ -4792,7 +4772,7 @@ def get_speed_of_network_interface(netif: str) -> int:
     return speed
 
 
-def get_network_logicalname_by_ip(ipaddr: str, lgnm_ip_kv: Dict) -> str:
+def get_network_logicalname_by_ip(ipaddr: str, lgnm_ip_kv: Dict[str, List[str]]) -> str:
     """Get network logical name of input IP address.
     Args:
         ipaddr: IP address string.
@@ -4813,11 +4793,11 @@ def get_network_logicalname_by_ip(ipaddr: str, lgnm_ip_kv: Dict) -> str:
 
     net_lgnm = ''
     found_cnt = 0
-    for key, val in lgnm_ip_kv.items():
-        if ipaddr == val:
+    for key, ip_list in lgnm_ip_kv.items():
+        if ipaddr in ip_list:
             found_cnt += 1
             net_lgnm = key
-            log.debug("%s is set to %s", ipaddr, val)
+            log.debug("%s is set to %s", ipaddr, ip_list)
             print(f"{INFO} has IP address {ipaddr} set to network interface: " +
                   f"{key}")
 
@@ -5177,10 +5157,13 @@ def main():
     log_file = f"{rltv_fn}_debug_{log_postfix}.out"
     log = set_logger(json_dir, log_file, isverbose)
 
-    ipok = is_ipv4(ip_addr)
-    if ipok is False:
+    try:
+        if '%' in ip_addr:
+            ip_addr = ip_addr.split('%')[0]
+        ipaddress.ip_address(ip_addr)
+    except ValueError:
         fatal_err_cnt += 1
-        print('')
+        print(f"{ERROR} Invalid IPv4 or IPv6 address format: {ip_addr}\n")
         return fatal_err_cnt
 
     lgnm_ip_kv = map_active_netif_to_ip()
@@ -5189,7 +5172,7 @@ def main():
         print(f"{ERROR} {ip_addr} is not available on active network device\n")
         return fatal_err_cnt
     else:
-        active_ips = list(lgnm_ip_kv.values())
+        active_ips = [ip for ips in lgnm_ip_kv.values() for ip in ips]
         if ip_addr not in active_ips:
             fatal_err_cnt += 1
             print(f"{ERROR} suggests choosing IP address from {active_ips}\n")
