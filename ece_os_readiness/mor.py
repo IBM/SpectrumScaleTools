@@ -46,7 +46,7 @@ MSM_APP = ""
 SHA256CKSUM_KV = {
     'HW_requirements.json': 'f3f99ee0897b4ff168bcdd1ee07ae47114b4ab5b5ccc6c86c7b788f571eb83da',
     'NIC_adapters.json': '6c78c45fca3a18010e14d1e0d218e62b5aa72bf7846017503f44409e8e872bde',
-    'packages.json': '6eb37ae7dce2d61a275db66c09313f169d0336e9d906cd4a8d4821c292fad885',
+    'packages.json': '71a40b1831be7d98e97de6d51a0f3228961a622269c8505f37dca932504c3e9f',
     'SAS_adapters.json': 'b780e4720cbb69c54a0fbd08fb401533d69088605116c660a8c3d3ee31fd7baa',
     'supported_OS.json': 'ad5d320bc1990f46b5e24aeceb97f8e44ceb77d354f0a2b81a9db0fcd8951a0f'
 }
@@ -1236,6 +1236,16 @@ def check_package(supp_pkg_kv: Dict) -> Tuple[int, Dict]:
     print(f"{INFO} is checking package installation state")
     pkg_errcnt = 0
     pkg_ins_kv = {}
+
+    # Detect OS once
+    try:
+        with open("/etc/os-release") as f:
+            os_release = f.read().lower()
+    except Exception:
+        os_release = ""
+
+    is_azure_linux = "azurelinux" in os_release
+
     for key, val in supp_pkg_kv.items():
         key = str(key)
         if key == "json_version":
@@ -1244,19 +1254,16 @@ def check_package(supp_pkg_kv: Dict) -> Tuple[int, Dict]:
         # Handle all packages with os-specific names.
         if isinstance(val, dict):
             if shutil.which("dpkg-query"):
-                pkg_name = val.get("Ubuntu", key)
+                pkg_name = val.get("Ubuntu")
+                if not pkg_name:
+                    continue
             elif shutil.which("rpm"):
-                # pkg_name = val.get("RHEL", key)
-                try:
-                    with open("/etc/os-release") as f:
-                        os_release = f.read().lower()
-                except Exception:
-                    os_release = ""
-
-                if "azurelinux" in os_release:
-                    pkg_name = val.get("AzureLinux", val.get("RHEL", key))
+                if is_azure_linux:
+                    pkg_name = val.get("AzureLinux")
                 else:
-                    pkg_name = val.get("RHEL", key)
+                    pkg_name = val.get("RHEL")
+                if not pkg_name:
+                    continue
             else:
                 pkg_name = key
             status = val.get("status", "OK")

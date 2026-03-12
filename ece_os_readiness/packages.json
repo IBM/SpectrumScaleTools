@@ -5,24 +5,29 @@
   "sg3_utils": {
     "Ubuntu": "sg3-utils",
     "RHEL": "sg3_utils",
+    "AzureLinux": "sg3_utils",
     "status": "OK"
   },
   "numactl": "OK",
   "numactl-libs": {
-    "Ubuntu": "numactl",
     "RHEL": "numactl-libs",
-    "AzureLinux": "numactl",
     "status": "OK"
   },
   "tuned": "OK",
   "MegaCli": {
     "Ubuntu": "megacli",
     "RHEL": "MegaCli",
+    "AzureLinux": "MegaCli",
     "status": "NOK"
   },
   "sqlite": {
     "Ubuntu": "sqlite3",
     "RHEL": "sqlite",
+    "AzureLinux": "sqlite",
+    "status": "OK"
+  },
+  "hwdata":{
+    "AzureLinux": "hwdata",
     "status": "OK"
   }
 }
