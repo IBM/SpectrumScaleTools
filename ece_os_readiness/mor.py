@@ -46,7 +46,7 @@ MSM_APP = ""
 SHA256CKSUM_KV = {
     'HW_requirements.json': 'f3f99ee0897b4ff168bcdd1ee07ae47114b4ab5b5ccc6c86c7b788f571eb83da',
     'NIC_adapters.json': '6c78c45fca3a18010e14d1e0d218e62b5aa72bf7846017503f44409e8e872bde',
-    'packages.json': 'f5852600919e0f47f6a33c767b4c09079e9eecc1debb47525666817dd49a645f',
+    'packages.json': '71a40b1831be7d98e97de6d51a0f3228961a622269c8505f37dca932504c3e9f',
     'SAS_adapters.json': 'b780e4720cbb69c54a0fbd08fb401533d69088605116c660a8c3d3ee31fd7baa',
     'supported_OS.json': 'ad5d320bc1990f46b5e24aeceb97f8e44ceb77d354f0a2b81a9db0fcd8951a0f'
 }
