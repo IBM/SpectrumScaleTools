@@ -25,5 +25,9 @@
     "RHEL": "sqlite",
     "AzureLinux": "sqlite",
     "status": "OK"
+  },
+  "hwdata":{
+    "AzureLinux": "hwdata",
+    "status": "OK"
   }
 }
