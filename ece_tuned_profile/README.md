@@ -52,6 +52,27 @@ NOTE: How to add profile to the system, refer to [Chapter 3. Customizing TuneD p
     For versions earlier than RHEL 10:
     - Copy the directory which has the suffix ***_RH\**** to the ***/etc/tuned/*** directory with new directory named as ***/etc/tuned/spectrumscale-ece***
     - Apply the profile: ***tuned-adm profile spectrumscale-ece***
-    
 - Verify current profile against system settings: ***tuned-adm verify***
 - Investigate log mentioned by output of 'tuned-adm verify' if hit issue
+
+- If issues occur during the restart of the tuned service and the profile gets reset after reboot, you can enforce the desired profile using a system override configuration.
+  Step to enforce:-
+  - Run the following command to edit the tuneD profile:
+    systemctl edit tuned
+  - Add this exactly in the empty space at the top:
+    [Service]
+    ExecStartPost=/usr/sbin/tuned-adm profile storagescale-ece
+  - Apply the changes:
+    systemctl restart tuned
+  - Verify the changes using:
+    tuned-adm verify
+  Steps to revert:-
+  - Run the following command to edit the tuneD profile:
+    systemctl edit tuned
+  - Delete the following line:
+    [Service]
+    ExecStartPost=/usr/sbin/tuned-adm profile storagescale-ece
+  - Apply the changes:
+    systemctl restart tuned
+  - Verify the changes using:
+    tuned-adm verify
